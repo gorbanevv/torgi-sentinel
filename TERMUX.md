@@ -1,85 +1,65 @@
-# Запуск Torgi Sentinel на телефоне (Android + Termux)
+# Запуск на телефоне (Android + Termux) — минимум действий
 
-Телефон даёт «жилой» мобильный IP, который torgi.gov.ru не блокирует. Бот
-работает 24/7 прямо на телефоне. Ничего платного.
+Телефон даёт «жилой» мобильный IP, который torgi.gov.ru не блокирует. Бот работает
+24/7 прямо на телефоне, бесплатно. От тебя нужно: поставить приложение и вставить
+одну команду — остальное установщик сделает сам.
 
-## 0. Что понадобится
-- Старый Android-телефон, постоянно на зарядке.
-- Интернет на нём (мобильный или Wi-Fi — оба дают не-датацентровый IP).
-- 15 минут на первую настройку.
+## Шаг 1. Поставить 2 приложения из F-Droid (НЕ из Play Store!)
+Версия из Play Store устаревшая и не подойдёт.
 
-## 1. Установить Termux и Termux:Boot (ВАЖНО: из F-Droid, не из Play Store)
-Версия из Play Store устаревшая и не годится.
+1. Установи **F-Droid**: https://f-droid.org (кнопка «Download F-Droid», поставь apk).
+2. В F-Droid найди и установи:
+   - **Termux**
+   - **Termux:Boot** (чтобы бот сам стартовал после перезагрузки телефона)
 
-1. Установи **F-Droid**: https://f-droid.org → кнопка «Download F-Droid» → установи apk.
-2. В F-Droid найди и установи **Termux**.
-3. Там же установи **Termux:Boot** (нужен для автозапуска после перезагрузки).
+## Шаг 2. Открыть Termux и вставить ОДНУ команду
+Скопируй команду (я дам её с уже вписанным токеном), вставь в Termux, нажми Enter.
+Она сама поставит Node, скачает бота, создаст конфиг, настроит автозапуск и запустит:
 
-## 2. Поставить Node.js
-Открой Termux и выполни по очереди:
 ```bash
-pkg update -y && pkg upgrade -y
-pkg install -y nodejs-lts git
-node -v      # должно показать v20.x или новее
+pkg update -y && pkg install -y git && (pkg install -y nodejs-lts || pkg install -y nodejs) && \
+git clone https://github.com/gorbanevv/torgi-sentinel.git ~/torgi-sentinel 2>/dev/null; \
+cd ~/torgi-sentinel && git pull -q 2>/dev/null; \
+TG_TOKEN='ВАШ_ТОКЕН' TG_CHAT='ВАШ_CHAT_ID' bash scripts/setup.sh
 ```
 
-## 3. Скачать код бота
-```bash
-cd ~
-git clone https://github.com/gorbanevv/torgi-sentinel.git
-cd torgi-sentinel
-```
+Через ~1 минуту в Telegram придёт «🟢 Torgi Sentinel запущен» — значит работает.
 
-## 4. Вписать токен и chat_id
-```bash
-cp config.example.json config.json
-nano config.json
-```
-В `nano`: замени `telegramBotToken` и `telegramChatId` на свои
-(как их получить — см. README.md, раздел про @BotFather). Сохрани: `Ctrl+O`,
-`Enter`, выход `Ctrl+X`.
+## Шаг 3. Одно действие руками (чтобы Android не убивал бота)
+- Настройки телефона → Приложения → **Termux** → Батарея → **«Без ограничений»**
+  (отключить оптимизацию батареи).
+- На Xiaomi/Huawei/Samsung дополнительно разреши Termux **автозапуск**.
+- Держи телефон на зарядке. **Не смахивай Termux** из недавних приложений
+  (он показывает уведомление — это нормально, он так работает в фоне).
 
-## 5. Проверить, что работает
-```bash
-node bot.js
-```
-В Telegram должно прийти «🟢 Torgi Sentinel запущен». Если пришло — всё ок,
-останови (`Ctrl+C`) и переходи к автозапуску. Если ошибка — покажи мне текст.
+Готово. Бот ловит новые лоты и шлёт их тебе.
 
-## 6. Автозапуск 24/7 (переживает перезагрузку телефона)
-```bash
-mkdir -p ~/.termux/boot
-cp ~/torgi-sentinel/scripts/run-forever.sh ~/.termux/boot/torgi-sentinel.sh
-chmod +x ~/.termux/boot/torgi-sentinel.sh
-```
-Затем один раз запусти вручную, чтобы стартануть прямо сейчас (не дожидаясь ребута):
-```bash
-bash ~/.termux/boot/torgi-sentinel.sh &
-```
-Скрипт держит `termux-wake-lock` (телефон не усыпит процесс) и перезапускает
-бота, если тот вдруг упал.
+---
 
-## 7. Чтобы Android не убивал Termux (обязательно)
-- Настройки телефона → Приложения → **Termux** → Батарея →
-  **«Без ограничений» / отключить оптимизацию батареи**.
-- То же для **Termux:Boot**.
-- Если есть «автозапуск» в настройках (Xiaomi/Huawei/Samsung) — разреши Termux.
+## Полезное
 
-## Полезные команды
 ```bash
-# посмотреть логи бота
+# смотреть логи
 tail -f ~/torgi-sentinel/bot.log
 
-# обновить код, когда я внесу правки
-cd ~/torgi-sentinel && git pull
+# обновить бота и перезапустить (когда я внесу правки)
+cd ~/torgi-sentinel && git pull && bash scripts/setup.sh
 
-# остановить всё
-pkill -f bot.js
-```
-
-## Проверка «а видит ли телефон torgi»
-```bash
+# проверить, что телефон видит torgi
 cd ~/torgi-sentinel && node scripts/smoke.js
+
+# остановить бота
+pkill -f run-forever.sh; pkill -f bot.js
 ```
-Должно быть «SMOKE: всё зелёное ✓». Это подтверждает, что с телефона сайт
-доступен (в отличие от VPS).
+
+## Если что-то пошло не так
+- В Telegram ничего не пришло → `tail -f ~/torgi-sentinel/bot.log` и пришли мне текст.
+- «SMOKE FATAL / ETIMEDOUT» на смоук-тесте → телефон сейчас в сети, которая тоже
+  режет torgi (редко). Переключи Wi-Fi ↔ мобильный интернет и повтори.
+
+## Ручная установка (если авто-установщик не сработал)
+1. `pkg update -y && pkg install -y nodejs-lts git`
+2. `git clone https://github.com/gorbanevv/torgi-sentinel.git ~/torgi-sentinel && cd ~/torgi-sentinel`
+3. `cp config.example.json config.json && nano config.json` — вписать `telegramBotToken` и `telegramChatId`
+4. Автозапуск: `mkdir -p ~/.termux/boot && cp scripts/run-forever.sh ~/.termux/boot/torgi-sentinel.sh && chmod +x ~/.termux/boot/torgi-sentinel.sh`
+5. Запуск сейчас: `bash ~/.termux/boot/torgi-sentinel.sh &`
