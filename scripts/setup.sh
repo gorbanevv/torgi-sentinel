@@ -14,7 +14,7 @@ say() { echo ""; echo ">>> $*"; }
 # 1) Конфиг: берём образец, вписываем токен/chat. Если config.json уже есть и env не задан — не трогаем.
 if [ -n "$TG_TOKEN" ] && [ -n "$TG_CHAT" ]; then
   say "Пишу config.json с твоим токеном и chat_id"
-  node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('config.example.json','utf8'));c.telegramBotToken=process.env.TG_TOKEN;c.telegramChatId=process.env.TG_CHAT;fs.writeFileSync('config.json',JSON.stringify(c,null,2));console.log('   ok, фильтров:',c.filters.length);"
+  node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('config.example.json','utf8'));c.telegramBotToken=process.env.TG_TOKEN;c.telegramChatId=process.env.TG_CHAT;if(process.env.TG_API)c.telegramApiBase=process.env.TG_API;fs.writeFileSync('config.json',JSON.stringify(c,null,2));console.log('   ok, фильтров:',c.filters.length, process.env.TG_API?('| через релей '+process.env.TG_API):'| напрямую в Telegram');"
 elif [ ! -f config.json ]; then
   echo "❌ Нет config.json и не передан TG_TOKEN/TG_CHAT. Запусти так:"
   echo "   TG_TOKEN='токен' TG_CHAT='chat_id' bash scripts/setup.sh"

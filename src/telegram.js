@@ -1,7 +1,9 @@
 'use strict';
 const https = require('https');
+const http = require('http');
 
-// Telegram Bot API напрямую через https, без зависимостей.
+// Telegram Bot API напрямую через https, ЛИБО через релей на VPS (apiBase = http/https://host:port).
+// Релей нужен, когда оператор режет api.telegram.org (тогда телефон шлёт через VPS).
 // Ретраи: сеть/5xx/429 (с учётом retry_after). 4xx кроме 429 — не ретраим, бросаем.
 function createTelegram({
   botToken,
@@ -10,17 +12,22 @@ function createTelegram({
   timeoutMs = 20000,
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 }) {
-  const agent = new https.Agent({ keepAlive: true, maxSockets: 2 });
+  const httpsAgent = new https.Agent({ keepAlive: true, maxSockets: 2 });
+  const httpAgent = new http.Agent({ keepAlive: true, maxSockets: 2 });
 
   function httpPost(url, bodyBuffer, contentType) {
     return new Promise((resolve, reject) => {
       const u = new URL(url);
-      const req = https.request(
+      const isHttps = u.protocol === 'https:';
+      const mod = isHttps ? https : http;
+      const req = mod.request(
         {
           hostname: u.hostname,
+          port: u.port || (isHttps ? 443 : 80),
           path: u.pathname + u.search,
           method: 'POST',
-          agent,
+          agent: isHttps ? httpsAgent : httpAgent,
+          rejectUnauthorized: false, // релей на VPS с самоподписанным сертификатом
           headers: { 'Content-Type': contentType, 'Content-Length': bodyBuffer.length },
         },
         (res) => {
