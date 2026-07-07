@@ -26,10 +26,9 @@ node -v      # должно показать v20.x или новее
 ## 3. Скачать код бота
 ```bash
 cd ~
-git clone <СЮДА_ВСТАВИМ_ССЫЛКУ_НА_РЕПОЗИТОРИЙ> torgi-sentinel
+git clone https://github.com/gorbanevv/torgi-sentinel.git
 cd torgi-sentinel
 ```
-(ссылку на репозиторий я дам после публикации кода)
 
 ## 4. Вписать токен и chat_id
 ```bash
