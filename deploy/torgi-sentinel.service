@@ -1,0 +1,21 @@
+[Unit]
+Description=Torgi Sentinel — мониторинг torgi.gov.ru → Telegram
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+Type=simple
+WorkingDirectory=/opt/torgi-sentinel
+ExecStart=/usr/bin/node /opt/torgi-sentinel/bot.js
+Restart=always
+RestartSec=5
+Environment=NODE_ENV=production
+# Токен и chat_id можно задать здесь вместо config.json:
+# Environment=TELEGRAM_BOT_TOKEN=123456:ABC...
+# Environment=TELEGRAM_CHAT_ID=123456789
+StandardOutput=journal
+StandardError=journal
+SyslogIdentifier=torgi-sentinel
+
+[Install]
+WantedBy=multi-user.target

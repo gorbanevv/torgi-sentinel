@@ -1,0 +1,30 @@
+{
+  "telegramBotToken": "ВСТАВЬ_ТОКЕН_ОТ_BOTFATHER",
+  "telegramChatId": "ВСТАВЬ_СВОЙ_CHAT_ID",
+  "pollIntervalMs": 3000,
+  "pageSize": 20,
+  "lotStatuses": ["PUBLISHED", "APPLICATIONS_SUBMISSION"],
+  "filters": [
+    {
+      "name": "sev-realty",
+      "displayName": "Севастополь · Недвижимость",
+      "dynSubjRF": "80",
+      "catCode": "7",
+      "realEstate": true
+    },
+    {
+      "name": "rostov-auto",
+      "displayName": "Ростовская область · Автомобили и мототехника",
+      "dynSubjRF": "63",
+      "catCode": "100",
+      "realEstate": false
+    },
+    {
+      "name": "sev-land",
+      "displayName": "Севастополь · Земельные участки",
+      "dynSubjRF": "80",
+      "catCode": "2",
+      "realEstate": true
+    }
+  ]
+}

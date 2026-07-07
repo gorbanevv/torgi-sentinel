@@ -1,0 +1,15 @@
+{
+  "name": "torgi-sentinel",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Мониторинг torgi.gov.ru → мгновенные уведомления в Telegram (zero-dependency)",
+  "main": "bot.js",
+  "engines": {
+    "node": ">=18"
+  },
+  "scripts": {
+    "start": "node bot.js",
+    "test": "node --test",
+    "smoke": "node scripts/smoke.js"
+  }
+}
