@@ -39,7 +39,7 @@ sleep 1
 # 4) Держим процесс живым и запускаем в фоне прямо сейчас
 say "Запускаю бота в фоне (wake-lock включён)"
 termux-wake-lock 2>/dev/null || true
-setsid bash "$HOME/.termux/boot/torgi-sentinel.sh" >/dev/null 2>&1 < /dev/null &
+nohup bash "$HOME/.termux/boot/torgi-sentinel.sh" >/dev/null 2>&1 < /dev/null &
 sleep 8
 
 # 5) Показываем, что реально стартануло
