@@ -10,6 +10,7 @@ const DEFAULTS = {
   heartbeatMinutes: 10,
   // «Опубликован» + «Приём заявок» — оба статуса ловим во всех фильтрах.
   lotStatuses: ['PUBLISHED', 'APPLICATIONS_SUBMISSION'],
+  heartbeatUrl: '', // если задан (relay /heartbeat) — шлём «я жив» для watchdog
   dataDir: path.join(__dirname, '..', 'data'),
 };
 

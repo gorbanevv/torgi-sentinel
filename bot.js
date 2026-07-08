@@ -6,6 +6,7 @@ const { createStore } = require('./src/store');
 const { formatLotMessage, stripHtml } = require('./src/formatter');
 const { createTelegram } = require('./src/telegram');
 const { createPoller } = require('./src/poller');
+const { startHeartbeat } = require('./src/heartbeat');
 
 function log(msg) {
   console.log(`${new Date().toISOString()} ${msg}`);
@@ -81,6 +82,11 @@ async function main() {
 
   // старты со сдвигом, чтобы не бить в API синхронно
   pollers.forEach((p, i) => setTimeout(() => p.run(), i * Math.floor(cfg.pollIntervalMs / pollers.length)));
+
+  // heartbeat на VPS: «я жив» каждые 2 минуты (для watchdog)
+  startHeartbeat({ url: cfg.heartbeatUrl, token: cfg.telegramBotToken, log });
+  if (cfg.heartbeatUrl) log(`heartbeat включён -> ${cfg.heartbeatUrl}`);
+
   log(`Torgi Sentinel запущен. Фильтров: ${cfg.filters.length}, интервал: ${cfg.pollIntervalMs}мс.`);
 }
 
