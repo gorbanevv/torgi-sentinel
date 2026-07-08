@@ -30,11 +30,13 @@ cp "$APP_DIR/scripts/run-forever.sh" "$HOME/.termux/boot/torgi-sentinel.sh"
 chmod +x "$HOME/.termux/boot/torgi-sentinel.sh"
 echo "   ok: ~/.termux/boot/torgi-sentinel.sh"
 
-# 3) Останавливаем прежний экземпляр (без дублей уведомлений)
+# 3) Останавливаем ВСЕ прежние экземпляры (иначе дубли уведомлений).
+#    Цикл автозапуска в проде называется torgi-sentinel.sh — его и надо гасить.
 say "Останавливаю прежние экземпляры (если были)"
-pkill -f "run-forever.sh" 2>/dev/null && echo "   остановлен цикл" || true
+pkill -f "torgi-sentinel.sh" 2>/dev/null && echo "   остановлен цикл автозапуска" || true
+pkill -f "run-forever.sh" 2>/dev/null || true
 pkill -f "bot.js" 2>/dev/null && echo "   остановлен bot.js" || true
-sleep 1
+sleep 3
 
 # 4) Держим процесс живым и запускаем в фоне прямо сейчас
 say "Запускаю бота в фоне (wake-lock включён)"
