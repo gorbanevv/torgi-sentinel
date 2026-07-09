@@ -11,6 +11,9 @@ const DEFAULTS = {
   // «Опубликован» + «Приём заявок» — оба статуса ловим во всех фильтрах.
   lotStatuses: ['PUBLISHED', 'APPLICATIONS_SUBMISSION'],
   heartbeatUrl: '', // если задан (relay /heartbeat) — шлём «я жив» для watchdog
+  // IP, с которого ходить на torgi (обход блокировки: основной IP Timeweb в блоке,
+  // доп. 92.51.23.164 — проходит). Пусто = ходить с дефолтного IP.
+  torgiLocalAddress: '',
   dataDir: path.join(__dirname, '..', 'data'),
 };
 

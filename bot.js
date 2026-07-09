@@ -14,7 +14,7 @@ function log(msg) {
 
 async function main() {
   const cfg = loadConfig();
-  const torgi = createTorgiClient();
+  const torgi = createTorgiClient({ localAddress: cfg.torgiLocalAddress || undefined });
   const store = createStore(path.join(cfg.dataDir, 'seen.json'));
   const tg = createTelegram({
     botToken: cfg.telegramBotToken,

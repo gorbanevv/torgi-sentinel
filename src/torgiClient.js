@@ -5,12 +5,15 @@ const BASE = 'https://torgi.gov.ru';
 
 // Тёплое keep-alive соединение — ядро скорости (0.23с против 3.3с на холодном TLS).
 // rejectUnauthorized:false — сертификат портала не проходит стандартную валидацию (§7 спеки).
-function createTorgiClient({ timeoutMs = 15000 } = {}) {
+// localAddress — привязка исходящих запросов к конкретному IP сервера (тот, что не в
+// блоклисте torgi; на Timeweb основной IP блокируется, а доп. 92.51.23.164 — проходит).
+function createTorgiClient({ timeoutMs = 15000, localAddress } = {}) {
   const agent = new https.Agent({
     keepAlive: true,
     keepAliveMsecs: 30000,
     maxSockets: 4,
     rejectUnauthorized: false,
+    ...(localAddress ? { localAddress } : {}),
   });
 
   const headers = {
