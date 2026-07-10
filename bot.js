@@ -49,9 +49,29 @@ async function main() {
   // Сторож ошибок: при устойчивой ошибке шлёт понятный алерт в Telegram, при возврате — «восстановлено».
   const alerter = createAlerter({ tg, log, cooldownMs: cfg.alertCooldownMs, flushDelayMs: cfg.alertFlushMs });
 
-  const pollers = cfg.filters.map((filter) =>
-    createPoller({
-      filter,
+  // Группируем фильтры по категории: одна категория по всем её регионам = ОДИН запрос
+  // (API объединяет повторяющиеся dynSubjRF) — 3 запроса на цикл вместо 8, интервал 30с.
+  const groups = new Map();
+  for (const f of cfg.filters) {
+    const key = String(f.catCode);
+    if (!groups.has(key)) groups.set(key, []);
+    groups.get(key).push(f);
+  }
+  const groupList = [...groups.values()];
+
+  // «Регион · Категория» → «Категория — Регион, Регион» для логов и алертов
+  function groupLabel(members) {
+    if (members.length === 1) return members[0].displayName;
+    const cat = (members[0].displayName.split('·')[1] || `категория ${members[0].catCode}`).trim();
+    const regions = members.map((m) => (m.displayName.split('·')[0] || m.name).trim());
+    return `${cat} — ${regions.join(', ')}`;
+  }
+
+  const pollers = groupList.map((members) => {
+    const label = groupLabel(members);
+    return createPoller({
+      members,
+      groupName: label,
       client: torgi,
       store,
       notifyLot,
@@ -62,16 +82,17 @@ async function main() {
       maxCatchupPages: cfg.maxCatchupPages,
       alertThreshold: cfg.alertThreshold || 3,
       alertSustainedMs: cfg.alertSustainedMs,
-      reportError: (err) => alerter.report(filter.displayName || filter.name, err),
-      reportOk: () => alerter.resolve(filter.displayName || filter.name),
-    })
-  );
+      reportError: (err) => alerter.report(label, err),
+      reportOk: () => alerter.resolve(label),
+    });
+  });
 
   setInterval(() => {
-    cfg.filters.forEach((f, i) => {
+    groupList.forEach((members, i) => {
       const s = pollers[i].stats();
       const age = s.lastOkAt ? `${Math.round((Date.now() - s.lastOkAt) / 1000)}с назад` : 'ещё не было';
-      log(`[heartbeat] ${f.name}: последний успешный опрос ${age}, ошибок подряд: ${s.consecutiveErrors}, виденных лотов: ${store.count(f.name)}`);
+      const counts = members.map((m) => `${m.name}=${store.count(m.name)}`).join(', ');
+      log(`[heartbeat] ${groupLabel(members)}: последний успешный опрос ${age}, ошибок подряд: ${s.consecutiveErrors}, лоты: ${counts}`);
     });
   }, (cfg.heartbeatMinutes || 10) * 60 * 1000).unref();
 

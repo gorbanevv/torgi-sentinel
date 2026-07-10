@@ -123,6 +123,84 @@ test('вся страница новая → листаем дальше до и
   assert.strictEqual(client.calls[1].page, 1);
 });
 
+// --- групповой опрос: одна категория, несколько регионов одним запросом ---
+
+const MEMBERS = [
+  { name: 'g-sev', displayName: 'Севастополь · Тест', dynSubjRF: '80', subjectRFCode: '92', catCode: '7', realEstate: true },
+  { name: 'g-ros', displayName: 'Ростовская область · Тест', dynSubjRF: '63', subjectRFCode: '61', catCode: '7', realEstate: true },
+];
+
+function mkRegLot(key, subjectRFCode) {
+  return { id: `${key}_1`, noticeNumber: key, lotNumber: 1, lotName: 'Лот ' + key, subjectRFCode };
+}
+
+function mkGroupNotify() {
+  const spy = { calls: [], async notifyLot(lot, member) { spy.calls.push(`${lot.id}@${member.name}`); } };
+  return spy;
+}
+
+test('группа: лоты раскладываются по регионам, дедуп в корзину своего фильтра', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkGroupNotify();
+  store.add('g-sev', 'A_1'); store.markSeeded('g-sev');
+  store.add('g-ros', 'B_1'); store.markSeeded('g-ros');
+
+  const p = createPoller({
+    members: MEMBERS, client, store,
+    notifyLot: notify.notifyLot, log: () => {}, sleep: async () => {},
+  });
+  // свежий ростовский C и известный севастопольский A в одной выдаче
+  client.queue.push({ content: [mkRegLot('C', '61'), mkRegLot('A', '92')], last: false });
+  const r = await p.pollOnce();
+
+  assert.strictEqual(r.notified, 1);
+  assert.deepStrictEqual(notify.calls, ['C_1@g-ros'], 'лот ушёл с фильтром своего региона');
+  assert.ok(store.has('g-ros', 'C_1'), 'помечен в корзине своего региона');
+  assert.strictEqual(store.has('g-sev', 'C_1'), false, 'в чужую корзину не попал');
+  // запрос группы — оба региона одним запросом
+  assert.deepStrictEqual(client.calls[0].dynSubjRF, ['80', '63']);
+});
+
+test('группа: лот неизвестного региона пропускается молча, остальные обрабатываются', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkGroupNotify();
+  store.add('g-sev', 'A_1'); store.markSeeded('g-sev');
+  store.markSeeded('g-ros');
+
+  const p = createPoller({
+    members: MEMBERS, client, store,
+    notifyLot: notify.notifyLot, log: () => {}, sleep: async () => {},
+  });
+  client.queue.push({ content: [mkRegLot('X', '77'), mkRegLot('D', '61'), mkRegLot('A', '92')], last: false });
+  const r = await p.pollOnce();
+
+  assert.strictEqual(r.notified, 1);
+  assert.deepStrictEqual(notify.calls, ['D_1@g-ros']);
+  assert.strictEqual(store.has('g-ros', 'X_1') || store.has('g-sev', 'X_1'), false, 'чужак не помечен нигде');
+});
+
+test('группа: незасеянный участник засевается своим отдельным запросом, без уведомлений', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkGroupNotify();
+  store.add('g-sev', 'A_1'); store.markSeeded('g-sev'); // сев уже засеян, ростов — нет
+
+  const p = createPoller({
+    members: MEMBERS, client, store,
+    notifyLot: notify.notifyLot, log: () => {}, sleep: async () => {},
+  });
+  client.queue.push({ content: [mkRegLot('R1', '61'), mkRegLot('R2', '61')], last: true }); // ответ на засев ростова
+  const r = await p.pollOnce();
+
+  assert.strictEqual(r.seeded, true);
+  assert.strictEqual(notify.calls.length, 0, 'засев без уведомлений');
+  assert.strictEqual(client.calls[0].dynSubjRF, '63', 'засев строго своим регионом');
+  assert.ok(store.isSeeded('g-ros') && store.has('g-ros', 'R1_1') && store.has('g-ros', 'R2_1'));
+  assert.strictEqual(store.has('g-sev', 'R1_1'), false);
+});
+
 // --- устойчивость и алерты (цикл run) ---
 
 // Обвязка для прогона run() с виртуальным временем: клиент всегда падает,

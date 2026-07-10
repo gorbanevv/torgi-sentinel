@@ -1,7 +1,19 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { createTorgiClient } = require('../src/torgiClient');
+const { createTorgiClient, buildSearchQuery } = require('../src/torgiClient');
+
+test('buildSearchQuery: несколько регионов → повторяющийся параметр (как lotStatus)', () => {
+  const q = buildSearchQuery({ dynSubjRF: ['80', '63', '26'], catCode: '7', size: 20, page: 0 });
+  assert.ok(q.includes('dynSubjRF=80&dynSubjRF=63&dynSubjRF=26'), q);
+  assert.ok(q.includes('catCode=7'));
+});
+
+test('buildSearchQuery: один регион строкой — одиночный параметр', () => {
+  const q = buildSearchQuery({ dynSubjRF: '63', catCode: '100', size: 20, page: 1 });
+  assert.strictEqual((q.match(/dynSubjRF=/g) || []).length, 1);
+  assert.ok(q.includes('page=1'));
+});
 
 test('клиент: searchLots и downloadImage идут через переданный лимитер', async () => {
   const scheduled = [];

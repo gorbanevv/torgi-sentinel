@@ -3,6 +3,23 @@ const https = require('https');
 
 const BASE = 'https://torgi.gov.ru';
 
+// Параметры подтверждены вживую: lotStatus и dynSubjRF (повтор параметра = объединение
+// значений — несколько статусов/регионов одним запросом), catCode (строго один),
+// page (0-based), sort. dynSubjRF: строка или массив строк.
+const DEFAULT_STATUSES = ['PUBLISHED', 'APPLICATIONS_SUBMISSION'];
+function buildSearchQuery({ dynSubjRF, catCode, size = 20, page = 0, lotStatuses = DEFAULT_STATUSES } = {}) {
+  const q = new URLSearchParams();
+  for (const st of lotStatuses.length ? lotStatuses : DEFAULT_STATUSES) q.append('lotStatus', st);
+  for (const r of Array.isArray(dynSubjRF) ? dynSubjRF : [dynSubjRF]) {
+    if (r !== undefined && r !== null && String(r) !== '') q.append('dynSubjRF', String(r));
+  }
+  if (catCode !== undefined && catCode !== null && String(catCode) !== '') q.set('catCode', String(catCode));
+  q.set('size', String(size));
+  q.set('page', String(page));
+  q.set('sort', 'firstVersionPublicationDate,desc');
+  return q.toString();
+}
+
 // Тёплое keep-alive соединение — ядро скорости (0.23с против 3.3с на холодном TLS).
 // rejectUnauthorized:false — сертификат портала не проходит стандартную валидацию (§7 спеки).
 // localAddress — привязка исходящих запросов к конкретному IP сервера (тот, что не в
@@ -45,18 +62,8 @@ function createTorgiClient({ timeoutMs = 15000, localAddress, limiter } = {}) {
     });
   }
 
-  // Параметры подтверждены вживую: lotStatus (повтор = объединение статусов),
-  // dynSubjRF, catCode, page (0-based), sort.
-  const DEFAULT_STATUSES = ['PUBLISHED', 'APPLICATIONS_SUBMISSION'];
-  function searchLots({ dynSubjRF, catCode, size = 20, page = 0, lotStatuses = DEFAULT_STATUSES } = {}) {
-    const q = new URLSearchParams();
-    for (const st of lotStatuses.length ? lotStatuses : DEFAULT_STATUSES) q.append('lotStatus', st);
-    if (dynSubjRF !== undefined && dynSubjRF !== null && String(dynSubjRF) !== '') q.set('dynSubjRF', String(dynSubjRF));
-    if (catCode !== undefined && catCode !== null && String(catCode) !== '') q.set('catCode', String(catCode));
-    q.set('size', String(size));
-    q.set('page', String(page));
-    q.set('sort', 'firstVersionPublicationDate,desc');
-    return throttled(() => getJson('/new/api/public/lotcards/search?' + q.toString()));
+  function searchLots(params = {}) {
+    return throttled(() => getJson('/new/api/public/lotcards/search?' + buildSearchQuery(params)));
   }
 
   function downloadImage(imageId, opts = {}) {
@@ -86,4 +93,4 @@ function createTorgiClient({ timeoutMs = 15000, localAddress, limiter } = {}) {
   return { searchLots, downloadImage, agent };
 }
 
-module.exports = { createTorgiClient };
+module.exports = { createTorgiClient, buildSearchQuery };

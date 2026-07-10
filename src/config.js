@@ -53,6 +53,25 @@ function loadConfig(configPath) {
     }
     f.displayName = f.displayName || f.name;
   }
+  // Групповой опрос (несколько регионов одной категории одним запросом) раскладывает лоты
+  // по subjectRFCode из карточки — он обязателен, когда категория встречается более 1 раза.
+  const byCat = new Map();
+  for (const f of cfg.filters) {
+    const k = String(f.catCode);
+    if (!byCat.has(k)) byCat.set(k, []);
+    byCat.get(k).push(f);
+  }
+  for (const [cat, members] of byCat) {
+    if (members.length < 2) continue;
+    for (const f of members) {
+      if (!f.subjectRFCode) {
+        throw new Error(
+          `config: фильтру ${f.name} нужен subjectRFCode для группового опроса категории ${cat} ` +
+          `(код региона в карточках лотов: Севастополь=92, Ростовская обл.=61, Краснодарский край=23)`
+        );
+      }
+    }
+  }
   return cfg;
 }
 
