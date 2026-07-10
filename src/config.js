@@ -6,7 +6,10 @@ const DEFAULTS = {
   telegramApiBase: 'https://api.telegram.org',
   pollIntervalMs: 3000,
   pageSize: 20,
-  maxCatchupPages: 5,
+  // Догон после простоя: листаем свежие лоты до первого виденного и досылаем пропущенное.
+  // Глубоко (25×100=2500 лотов/группа), чтобы пережить долгий простой без потери лотов.
+  catchupPageSize: 100,
+  maxCatchupPages: 25,
   heartbeatMinutes: 10,
   // «Опубликован» + «Приём заявок» — оба статуса ловим во всех фильтрах.
   lotStatuses: ['PUBLISHED', 'APPLICATIONS_SUBMISSION'],

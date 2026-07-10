@@ -4,7 +4,7 @@ const { loadConfig } = require('./src/config');
 const { createRateLimiter } = require('./src/rateLimiter');
 const { createTorgiClient } = require('./src/torgiClient');
 const { createStore } = require('./src/store');
-const { formatLotMessage, stripHtml } = require('./src/formatter');
+const { formatLotMessage, stripHtml, escapeHtml } = require('./src/formatter');
 const { createTelegram } = require('./src/telegram');
 const { createPoller } = require('./src/poller');
 const { startHeartbeat } = require('./src/heartbeat');
@@ -79,11 +79,18 @@ async function main() {
       lotStatuses: cfg.lotStatuses,
       pollIntervalMs: cfg.pollIntervalMs,
       pageSize: cfg.pageSize,
+      catchupPageSize: cfg.catchupPageSize,
       maxCatchupPages: cfg.maxCatchupPages,
       alertThreshold: cfg.alertThreshold || 3,
       alertSustainedMs: cfg.alertSustainedMs,
       reportError: (err) => alerter.report(label, err),
       reportOk: () => alerter.resolve(label),
+      // догон после простоя упёрся в потолок — часть старых лотов могла не поместиться
+      onCatchupOverflow: (n) => tg.sendMessage(
+        `⚠️ <b>Долгий простой</b> — ${escapeHtml(label)}\n\n` +
+        `Досылаю ${n} свежих лотов, но за время простоя их могло появиться больше, чем помещается в догон. ` +
+        `Часть старых могла быть пропущена — проверьте сайт вручную за период тишины.`
+      ).catch(() => {}),
     });
   });
 

@@ -24,14 +24,15 @@ function createPoller({
   log,
   lotStatuses = ['PUBLISHED', 'APPLICATIONS_SUBMISSION'],
   pollIntervalMs = 3000,
-  pageSize = 20,
-  maxCatchupPages = 5,
+  catchupPageSize = 100,      // размер страницы догона: 100 → глубокий догон немногими запросами
+  maxCatchupPages = 25,       // потолок глубины догона (25×100=2500 лотов на группу за простой)
   maxSeedPages = 100,
   maxBackoffMs = 600000,      // потолок паузы между повторами при затяжной беде (10 мин)
   alertThreshold = 3,         // алерт не раньше стольких ошибок подряд…
   alertSustainedMs = 300000,  // …И не раньше, чем беда продержится столько (не алертим мигание)
   reportError = null, // (err) => void — сторож сам решает, слать ли (кулдаун/склейка)
   reportOk = null,    // () => void — при восстановлении после алерта
+  onCatchupOverflow = null, // (кол-во) => void — догон упёрся в потолок, не встретив известного лота
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
   now = Date.now,
 }) {
@@ -73,11 +74,16 @@ function createPoller({
     log(`[${m.name}] первичный засев: ${added} текущих лотов записано без уведомлений`);
   }
 
+  // Листаем свежие лоты до первого УЖЕ ВИДЕННОГО (сортировка по дате убывает): всё, что новее
+  // границы «виденного», — пропущено за простой и подлежит досылке. Потолок глубокий, чтобы
+  // покрыть долгий простой; если он всё же исчерпан, не встретив известного лота, — возможна
+  // дыра (truncated): досылаем самые свежие, а о дыре сигналим отдельно.
   async function fetchNewLots() {
     const fresh = [];
     const regionParam = multi ? list.map((m) => m.dynSubjRF) : list[0].dynSubjRF;
+    let truncated = false;
     for (let page = 0; page < maxCatchupPages; page++) {
-      const data = await client.searchLots({ dynSubjRF: regionParam, catCode, lotStatuses, size: pageSize, page });
+      const data = await client.searchLots({ dynSubjRF: regionParam, catCode, lotStatuses, size: catchupPageSize, page });
       const lots = data.content || [];
       let sawKnown = false;
       for (const lot of lots) {
@@ -87,17 +93,18 @@ function createPoller({
         else fresh.push({ lot, member: m });
       }
       if (sawKnown || data.last || lots.length === 0) break;
+      if (page === maxCatchupPages - 1) truncated = true; // упёрлись в потолок, известного так и нет
     }
-    return fresh;
+    return { fresh, truncated };
   }
 
   async function pollOnce() {
     const unseeded = list.filter((m) => !store.isSeeded(m.name));
     if (unseeded.length > 0) {
       for (const m of unseeded) await seedMember(m);
-      return { seeded: true, notified: 0 };
+      return { seeded: true, notified: 0, truncated: false };
     }
-    const fresh = await fetchNewLots();
+    const { fresh, truncated } = await fetchNewLots();
     fresh.reverse(); // старые сначала — сообщения приходят хронологично
     let notified = 0;
     for (const { lot, member } of fresh) {
@@ -106,7 +113,11 @@ function createPoller({
       store.save();
       notified++;
     }
-    return { seeded: false, notified };
+    if (truncated) {
+      log(`[${name}] догон упёрся в потолок ${maxCatchupPages}×${catchupPageSize}: досылано ${notified}, часть старых могла не поместиться`);
+      if (onCatchupOverflow) { try { await onCatchupOverflow(notified); } catch {} }
+    }
+    return { seeded: false, notified, truncated };
   }
 
   async function run() {

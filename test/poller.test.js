@@ -123,6 +123,92 @@ test('вся страница новая → листаем дальше до и
   assert.strictEqual(client.calls[1].page, 1);
 });
 
+// --- догон после простоя: досылаем всё, что появилось, пока бот молчал ---
+
+test('догон: пропущенная за простой пачка длиннее страницы доезжает до известного лота', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkNotify();
+  store.add('f1', 'OLD_1');
+  store.markSeeded('f1');
+  // за простой опубликовано 5 новых; страница по 2 — нужно три запроса
+  client.queue.push({ content: [mkLot('E'), mkLot('D')], last: false });
+  client.queue.push({ content: [mkLot('C'), mkLot('B')], last: false });
+  client.queue.push({ content: [mkLot('A'), mkLot('OLD')], last: false }); // OLD известен → стоп
+
+  const p = createPoller({
+    filter: FILTER, client, store, notifyLot: notify.notifyLot,
+    log: () => {}, sleep: async () => {}, catchupPageSize: 2, maxCatchupPages: 10,
+  });
+  const r = await p.pollOnce();
+
+  assert.deepStrictEqual(notify.calls, ['A_1', 'B_1', 'C_1', 'D_1', 'E_1'], 'все пропущенные, хронологично');
+  assert.strictEqual(r.truncated, false);
+  assert.strictEqual(client.calls.length, 3, 'остановились на первом известном');
+});
+
+test('догон глубже прежнего лимита в 5 страниц (долгий простой)', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkNotify();
+  store.add('f1', 'OLD_1');
+  store.markSeeded('f1');
+  // 7 страниц по одному новому лоту — прежний потолок (5) обрезал бы хвост
+  for (let i = 7; i >= 1; i--) client.queue.push({ content: [mkLot('N' + i)], last: false });
+  client.queue.push({ content: [mkLot('OLD')], last: false }); // известен → стоп
+
+  const p = createPoller({
+    filter: FILTER, client, store, notifyLot: notify.notifyLot,
+    log: () => {}, sleep: async () => {}, catchupPageSize: 1, maxCatchupPages: 25,
+  });
+  const r = await p.pollOnce();
+
+  assert.deepStrictEqual(notify.calls, ['N1_1', 'N2_1', 'N3_1', 'N4_1', 'N5_1', 'N6_1', 'N7_1']);
+  assert.strictEqual(r.truncated, false);
+});
+
+test('догон исчерпал бюджет, не встретив известного → truncated + сигнал переполнения', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkNotify();
+  store.add('f1', 'OLD_1');
+  store.markSeeded('f1');
+  client.queue.push({ content: [mkLot('F'), mkLot('E')], last: false });
+  client.queue.push({ content: [mkLot('D'), mkLot('C')], last: false }); // известного так и не встретили в бюджете
+
+  let overflow = null;
+  const p = createPoller({
+    filter: FILTER, client, store, notifyLot: notify.notifyLot,
+    log: () => {}, sleep: async () => {}, catchupPageSize: 2, maxCatchupPages: 2,
+    onCatchupOverflow: (n) => { overflow = n; },
+  });
+  const r = await p.pollOnce();
+
+  assert.strictEqual(r.truncated, true, 'помечаем возможную дыру');
+  assert.strictEqual(overflow, 4, 'сообщили, сколько успели догнать');
+  assert.deepStrictEqual(notify.calls, ['C_1', 'D_1', 'E_1', 'F_1'], 'самые свежие всё равно доставлены');
+});
+
+test('догон: конец списка (last) — не переполнение', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkNotify();
+  store.markSeeded('f1'); // засеян, но пусто (крайний случай)
+  client.queue.push({ content: [mkLot('B'), mkLot('A')], last: true });
+
+  let overflow = null;
+  const p = createPoller({
+    filter: FILTER, client, store, notifyLot: notify.notifyLot,
+    log: () => {}, sleep: async () => {}, catchupPageSize: 2, maxCatchupPages: 2,
+    onCatchupOverflow: (n) => { overflow = n; },
+  });
+  const r = await p.pollOnce();
+
+  assert.strictEqual(r.truncated, false, 'дошли до конца списка — дыры нет');
+  assert.strictEqual(overflow, null, 'сигнал переполнения не шлётся');
+  assert.deepStrictEqual(notify.calls, ['A_1', 'B_1']);
+});
+
 // --- групповой опрос: одна категория, несколько регионов одним запросом ---
 
 const MEMBERS = [
