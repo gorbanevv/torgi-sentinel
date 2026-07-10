@@ -7,6 +7,7 @@ const { formatLotMessage, stripHtml } = require('./src/formatter');
 const { createTelegram } = require('./src/telegram');
 const { createPoller } = require('./src/poller');
 const { startHeartbeat } = require('./src/heartbeat');
+const { createAlerter } = require('./src/alerts');
 
 function log(msg) {
   console.log(`${new Date().toISOString()} ${msg}`);
@@ -42,6 +43,9 @@ async function main() {
     }
   }
 
+  // Сторож ошибок: при устойчивой ошибке шлёт понятный алерт в Telegram, при возврате — «восстановлено».
+  const alerter = createAlerter({ tg, log });
+
   const pollers = cfg.filters.map((filter) =>
     createPoller({
       filter,
@@ -53,6 +57,9 @@ async function main() {
       pollIntervalMs: cfg.pollIntervalMs,
       pageSize: cfg.pageSize,
       maxCatchupPages: cfg.maxCatchupPages,
+      alertThreshold: cfg.alertThreshold || 3,
+      reportError: (err) => alerter.report(filter.displayName || filter.name, err),
+      reportOk: () => alerter.resolve(filter.displayName || filter.name),
     })
   );
 
@@ -71,7 +78,15 @@ async function main() {
   };
   process.on('SIGTERM', () => shutdown('SIGTERM'));
   process.on('SIGINT', () => shutdown('SIGINT'));
-  process.on('unhandledRejection', (e) => log(`unhandledRejection: ${e && e.message}`));
+  process.on('unhandledRejection', (e) => {
+    log(`unhandledRejection: ${e && e.message}`);
+    alerter.report('внутренняя ошибка бота', e).catch(() => {});
+  });
+  process.on('uncaughtException', (e) => {
+    log(`uncaughtException: ${e && e.message}`);
+    // сообщаем и даём systemd перезапустить (Restart=always)
+    alerter.report('критическая ошибка бота (перезапуск)', e).catch(() => {}).finally(() => setTimeout(() => process.exit(1), 1500));
+  });
 
   try {
     const names = cfg.filters.map((f) => `• ${f.displayName}`).join('\n');

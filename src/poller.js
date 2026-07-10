@@ -19,6 +19,9 @@ function createPoller({
   maxCatchupPages = 5,
   maxSeedPages = 100,
   maxBackoffMs = 60000,
+  alertThreshold = 3, // после стольких ошибок подряд шлём алерт (гистерезис против спама)
+  reportError = null, // (err) => void — вызывается один раз при достижении порога
+  reportOk = null,    // () => void — при восстановлении после алерта
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
 }) {
   let consecutiveErrors = 0;
@@ -78,10 +81,12 @@ function createPoller({
 
   async function run() {
     log(`[${filter.name}] поллер запущен: dynSubjRF=${filter.dynSubjRF} catCode=${filter.catCode}, интервал ${pollIntervalMs}мс`);
+    let alerted = false;
     while (!stopped) {
       try {
         const r = await pollOnce();
         lastOkAt = Date.now();
+        if (alerted && reportOk) { alerted = false; try { await reportOk(); } catch {} }
         consecutiveErrors = 0;
         if (r.notified > 0) log(`[${filter.name}] отправлено уведомлений: ${r.notified}`);
       } catch (e) {
@@ -94,6 +99,11 @@ function createPoller({
           : Math.min(pollIntervalMs * 2 ** consecutiveErrors, maxBackoffMs);
         if (!soft || consecutiveErrors === 1 || consecutiveErrors % 20 === 0) {
           log(`[${filter.name}] ${soft ? '503/недоступен' : 'ошибка'} (${consecutiveErrors} подряд) — пауза ${backoff}мс`);
+        }
+        // гистерезис: алерт один раз при достижении порога устойчивой ошибки
+        if (!alerted && consecutiveErrors >= alertThreshold && reportError) {
+          alerted = true;
+          try { await reportError(e); } catch {}
         }
         await sleep(backoff);
         continue;
