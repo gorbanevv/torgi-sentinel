@@ -71,3 +71,66 @@ test('alerter: не падает, если tg.sendMessage бросает', async
   const a = createAlerter({ tg });
   await a.report('ф', new Error('torgi HTTP 503')); // не должно бросить
 });
+
+// --- анти-спам: кулдаун, объединение, отмена мигания ---
+
+test('alerter: повтор того же типа в кулдауне подавлен вместе с «восстановлено»', async () => {
+  let t = 1_000_000;
+  const tg = fakeTg();
+  const a = createAlerter({ tg, now: () => t, cooldownMs: 60000 });
+  await a.report('ф', new Error('torgi HTTP 503'));
+  await a.resolve('ф');
+  assert.strictEqual(tg.sent.length, 2, 'первая пара алерт+восстановлено');
+  t += 10000; // мигаем снова внутри кулдауна
+  await a.report('ф', new Error('torgi HTTP 503'));
+  await a.resolve('ф');
+  assert.strictEqual(tg.sent.length, 2, 'мигание в кулдауне не спамит');
+});
+
+test('alerter: затяжная тихая ошибка будится повторным report после кулдауна', async () => {
+  let t = 1_000_000;
+  const tg = fakeTg();
+  const a = createAlerter({ tg, now: () => t, cooldownMs: 60000 });
+  await a.report('ф', new Error('torgi HTTP 503'));
+  await a.resolve('ф');
+  t += 10000;
+  await a.report('ф', new Error('torgi HTTP 503')); // тихо (кулдаун)
+  assert.strictEqual(tg.sent.length, 2);
+  t += 70000; // кулдаун истёк, поллер продолжает докладывать ту же беду
+  await a.report('ф', new Error('torgi HTTP 503'));
+  assert.strictEqual(tg.sent.length, 3, 'тихий алерт повышен до громкого');
+});
+
+test('alerter: беды нескольких фильтров склеиваются в одно сообщение', async () => {
+  const tg = fakeTg();
+  const a = createAlerter({ tg, flushDelayMs: 20 });
+  await a.report('Фильтр А', new Error('torgi HTTP 503'));
+  await a.report('Фильтр Б', new Error('torgi HTTP 503'));
+  await a.report('Фильтр В', new Error('torgi HTTP 503'));
+  assert.strictEqual(tg.sent.length, 0, 'копим в окне объединения');
+  await new Promise((r) => setTimeout(r, 80));
+  assert.strictEqual(tg.sent.length, 1, 'одно объединённое сообщение');
+  assert.ok(tg.sent[0].includes('Фильтр А') && tg.sent[0].includes('Фильтр В'));
+});
+
+test('alerter: flush() отправляет отложенное немедленно (аварийный выход)', async () => {
+  const tg = fakeTg();
+  const a = createAlerter({ tg, flushDelayMs: 60000 }); // окно заведомо большое
+  await a.report('ф', new Error('torgi HTTP 503'));
+  assert.strictEqual(tg.sent.length, 0);
+  await a.flush();
+  assert.strictEqual(tg.sent.length, 1, 'flush не ждёт окна');
+});
+
+test('alerter: восстановление до отправки отменяет отложенный алерт целиком', async () => {
+  const tg = fakeTg();
+  const a = createAlerter({ tg, flushDelayMs: 20 });
+  await a.report('ф', new Error('torgi HTTP 503'));
+  await a.resolve('ф'); // мигнуло внутри окна
+  await new Promise((r) => setTimeout(r, 80));
+  assert.strictEqual(tg.sent.length, 0, 'ни алерта, ни восстановления');
+  // кулдаун не сожжён: следующая настоящая авария громкая
+  await a.report('ф', new Error('torgi HTTP 503'));
+  await new Promise((r) => setTimeout(r, 80));
+  assert.strictEqual(tg.sent.length, 1);
+});

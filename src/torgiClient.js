@@ -7,7 +7,11 @@ const BASE = 'https://torgi.gov.ru';
 // rejectUnauthorized:false — сертификат портала не проходит стандартную валидацию (§7 спеки).
 // localAddress — привязка исходящих запросов к конкретному IP сервера (тот, что не в
 // блоклисте torgi; на Timeweb основной IP блокируется, а доп. 92.51.23.164 — проходит).
-function createTorgiClient({ timeoutMs = 15000, localAddress } = {}) {
+// limiter — глобальный дозатор (см. rateLimiter.js): все запросы к torgi идут через
+// одну очередь с зазором, иначе поллеры конкурируют за per-IP лимит и «хвостовые»
+// фильтры вечно получают 503.
+function createTorgiClient({ timeoutMs = 15000, localAddress, limiter } = {}) {
+  const throttled = (fn) => (limiter ? limiter.schedule(fn) : fn());
   const agent = new https.Agent({
     keepAlive: true,
     keepAliveMsecs: 30000,
@@ -52,10 +56,14 @@ function createTorgiClient({ timeoutMs = 15000, localAddress } = {}) {
     q.set('size', String(size));
     q.set('page', String(page));
     q.set('sort', 'firstVersionPublicationDate,desc');
-    return getJson('/new/api/public/lotcards/search?' + q.toString());
+    return throttled(() => getJson('/new/api/public/lotcards/search?' + q.toString()));
   }
 
-  function downloadImage(imageId, { maxBytes = 9 * 1024 * 1024, imageTimeoutMs = 12000 } = {}) {
+  function downloadImage(imageId, opts = {}) {
+    return throttled(() => rawDownloadImage(imageId, opts));
+  }
+
+  function rawDownloadImage(imageId, { maxBytes = 9 * 1024 * 1024, imageTimeoutMs = 12000 } = {}) {
     return new Promise((resolve, reject) => {
       const req = https.get(`${BASE}/new/file-store/v1/${imageId}`, { agent, headers }, (res) => {
         if (res.statusCode !== 200) { res.resume(); return reject(new Error(`image HTTP ${res.statusCode}`)); }

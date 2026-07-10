@@ -69,36 +69,148 @@ function describeError(err) {
 }
 
 // Создаёт сторожа. tg — объект с sendMessage. log — функция логирования.
-function createAlerter({ tg, log = () => {} }) {
-  const active = new Map(); // key(контекст) -> code активного алерта
+//
+// Анти-спам (урок инцидента 2026-07-10 — десятки 🔴/✅ за вечер):
+//  - flushDelayMs: беды, пришедшие в одном окне, склеиваются в ОДНО сообщение
+//    (общая причина вроде rate-limit бьёт по всем фильтрам разом);
+//  - cooldownMs: повторный алерт того же типа по тому же фильтру не чаще кулдауна —
+//    мигание «упало-поднялось-упало» не долбит в чат; затяжная тихая беда будится
+//    повторным report() после кулдауна;
+//  - восстановление до отправки снимает отложенный алерт молча (мигнуло — не спамим).
+function createAlerter({ tg, log = () => {}, cooldownMs = 30 * 60 * 1000, flushDelayMs = 0, now = Date.now }) {
+  const active = new Map();     // контекст -> { code, silent } активной беды
+  const lastLoudAt = new Map(); // `контекст|код` -> когда последний раз алертили громко
+  let pendingAlerts = [];       // [{ context, d, key, prevLoudAt }] — ждут окна склейки
+  let pendingResolves = [];     // [context]
+  let alertTimer = null;
+  let resolveTimer = null;
 
   async function send(text) {
     try { await tg.sendMessage(text); } catch (e) { log(`[alert] не удалось отправить алерт: ${e.message}`); }
   }
 
-  // Сообщить об ошибке в контексте (напр. имя фильтра). Дедуп по коду.
+  function alertMessage(items) {
+    if (items.length === 1) {
+      const { context, d } = items[0];
+      return (
+        `🔴 <b>Ошибка мониторинга</b> — ${escapeHtml(context)}\n\n` +
+        `<b>${escapeHtml(d.title)}</b>\n` +
+        `${d.meaning}\n\n` +
+        `<code>${escapeHtml(d.code)}</code>`
+      );
+    }
+    // группируем по типу беды: обычно она одна на всех (rate-limit, блокировка IP)
+    const byCode = new Map();
+    for (const it of items) {
+      if (!byCode.has(it.d.code)) byCode.set(it.d.code, { d: it.d, contexts: [] });
+      byCode.get(it.d.code).contexts.push(it.context);
+    }
+    const parts = [`🔴 <b>Ошибка мониторинга</b> — затронуто фильтров: ${items.length}`];
+    for (const { d, contexts } of byCode.values()) {
+      parts.push(
+        '',
+        `<b>${escapeHtml(d.title)}</b>`,
+        d.meaning,
+        contexts.map((c) => `• ${escapeHtml(c)}`).join('\n'),
+        `<code>${escapeHtml(d.code)}</code>`
+      );
+    }
+    return parts.join('\n');
+  }
+
+  async function flushAlerts() {
+    if (alertTimer) { clearTimeout(alertTimer); alertTimer = null; }
+    const items = pendingAlerts;
+    pendingAlerts = [];
+    if (items.length > 0) await send(alertMessage(items));
+  }
+
+  async function flushResolves() {
+    if (resolveTimer) { clearTimeout(resolveTimer); resolveTimer = null; }
+    const ctxs = pendingResolves;
+    pendingResolves = [];
+    if (ctxs.length > 0) {
+      await send(`✅ <b>Восстановлено</b> — ${ctxs.map(escapeHtml).join(', ')}\nМониторинг снова работает штатно.`);
+    }
+  }
+
+  function queueAlert(item) {
+    pendingAlerts.push(item);
+    if (flushDelayMs <= 0) return flushAlerts();
+    if (!alertTimer) {
+      alertTimer = setTimeout(() => { flushAlerts(); }, flushDelayMs);
+      if (alertTimer.unref) alertTimer.unref();
+    }
+    return Promise.resolve();
+  }
+
+  function queueResolve(context) {
+    pendingResolves.push(context);
+    if (flushDelayMs <= 0) return flushResolves();
+    if (!resolveTimer) {
+      resolveTimer = setTimeout(() => { flushResolves(); }, flushDelayMs);
+      if (resolveTimer.unref) resolveTimer.unref();
+    }
+    return Promise.resolve();
+  }
+
+  // Сообщить об ошибке в контексте (напр. имя фильтра).
   async function report(context, err) {
     const d = describeError(err);
-    if (active.get(context) === d.code) return; // тот же тип уже заалерчен — молчим
-    active.set(context, d.code);
-    const msg =
-      `🔴 <b>Ошибка мониторинга</b> — ${escapeHtml(context)}\n\n` +
-      `<b>${escapeHtml(d.title)}</b>\n` +
-      `${d.meaning}\n\n` +
-      `<code>${escapeHtml(d.code)}</code>`;
+    const key = `${context}|${d.code}`;
+    const entry = active.get(context);
+    if (entry && entry.code === d.code) {
+      // та же беда уже активна: молчим; тихую после кулдауна повышаем до громкой
+      const prev = lastLoudAt.get(key);
+      if (entry.silent && (prev === undefined || now() - prev >= cooldownMs)) {
+        entry.silent = false;
+        lastLoudAt.set(key, now());
+        log(`[alert] ${context}: ${d.code} — ${d.title} (беда продолжается, кулдаун истёк)`);
+        return queueAlert({ context, d, key, prevLoudAt: prev });
+      }
+      return;
+    }
+    const prevLoudAt = lastLoudAt.get(key);
+    const loud = prevLoudAt === undefined || now() - prevLoudAt >= cooldownMs;
+    active.set(context, { code: d.code, silent: !loud });
+    if (!loud) {
+      log(`[alert] ${context}: ${d.code} — подавлено кулдауном`);
+      return;
+    }
+    lastLoudAt.set(key, now());
     log(`[alert] ${context}: ${d.code} — ${d.title}`);
-    await send(msg);
+    return queueAlert({ context, d, key, prevLoudAt });
   }
 
-  // Всё снова ок в контексте — если были ошибки, сообщить о восстановлении.
+  // Всё снова ок в контексте — если громко алертили, сообщить о восстановлении.
   async function resolve(context) {
-    if (!active.has(context)) return;
+    const entry = active.get(context);
+    if (!entry) return;
     active.delete(context);
+    // алерт ещё не улетел (мигнуло внутри окна склейки) — снимаем молча и возвращаем кулдаун
+    const idx = pendingAlerts.findIndex((it) => it.context === context);
+    if (idx !== -1) {
+      const [it] = pendingAlerts.splice(idx, 1);
+      if (it.prevLoudAt === undefined) lastLoudAt.delete(it.key);
+      else lastLoudAt.set(it.key, it.prevLoudAt);
+      log(`[alert] ${context}: мигнуло — отложенный алерт снят`);
+      return;
+    }
+    if (entry.silent) {
+      log(`[alert] ${context}: восстановлено (алерт был подавлен кулдауном — молчим)`);
+      return;
+    }
     log(`[alert] ${context}: восстановлено`);
-    await send(`✅ <b>Восстановлено</b> — ${escapeHtml(context)}\nМониторинг снова работает штатно.`);
+    return queueResolve(context);
   }
 
-  return { report, resolve, describeError };
+  // Немедленно отправить всё отложенное (аварийный выход процесса).
+  async function flush() {
+    await flushAlerts();
+    await flushResolves();
+  }
+
+  return { report, resolve, flush, describeError };
 }
 
 module.exports = { createAlerter, describeError, escapeHtml };

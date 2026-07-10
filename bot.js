@@ -1,6 +1,7 @@
 'use strict';
 const path = require('path');
 const { loadConfig } = require('./src/config');
+const { createRateLimiter } = require('./src/rateLimiter');
 const { createTorgiClient } = require('./src/torgiClient');
 const { createStore } = require('./src/store');
 const { formatLotMessage, stripHtml } = require('./src/formatter');
@@ -15,7 +16,9 @@ function log(msg) {
 
 async function main() {
   const cfg = loadConfig();
-  const torgi = createTorgiClient({ localAddress: cfg.torgiLocalAddress || undefined });
+  // один дозатор на ВСЕ запросы к torgi: фильтры не конкурируют за per-IP лимит
+  const limiter = createRateLimiter({ minGapMs: cfg.torgiMinRequestGapMs, jitterMs: cfg.torgiRequestJitterMs });
+  const torgi = createTorgiClient({ localAddress: cfg.torgiLocalAddress || undefined, limiter });
   const store = createStore(path.join(cfg.dataDir, 'seen.json'));
   const tg = createTelegram({
     botToken: cfg.telegramBotToken,
@@ -44,7 +47,7 @@ async function main() {
   }
 
   // Сторож ошибок: при устойчивой ошибке шлёт понятный алерт в Telegram, при возврате — «восстановлено».
-  const alerter = createAlerter({ tg, log });
+  const alerter = createAlerter({ tg, log, cooldownMs: cfg.alertCooldownMs, flushDelayMs: cfg.alertFlushMs });
 
   const pollers = cfg.filters.map((filter) =>
     createPoller({
@@ -58,6 +61,7 @@ async function main() {
       pageSize: cfg.pageSize,
       maxCatchupPages: cfg.maxCatchupPages,
       alertThreshold: cfg.alertThreshold || 3,
+      alertSustainedMs: cfg.alertSustainedMs,
       reportError: (err) => alerter.report(filter.displayName || filter.name, err),
       reportOk: () => alerter.resolve(filter.displayName || filter.name),
     })
@@ -80,12 +84,15 @@ async function main() {
   process.on('SIGINT', () => shutdown('SIGINT'));
   process.on('unhandledRejection', (e) => {
     log(`unhandledRejection: ${e && e.message}`);
-    alerter.report('внутренняя ошибка бота', e).catch(() => {});
+    Promise.resolve(alerter.report('внутренняя ошибка бота', e)).catch(() => {});
   });
   process.on('uncaughtException', (e) => {
     log(`uncaughtException: ${e && e.message}`);
-    // сообщаем и даём systemd перезапустить (Restart=always)
-    alerter.report('критическая ошибка бота (перезапуск)', e).catch(() => {}).finally(() => setTimeout(() => process.exit(1), 1500));
+    // сообщаем (flush — не ждём окна склейки) и даём systemd перезапустить (Restart=always)
+    Promise.resolve(alerter.report('критическая ошибка бота (перезапуск)', e))
+      .then(() => alerter.flush())
+      .catch(() => {})
+      .finally(() => setTimeout(() => process.exit(1), 1500));
   });
 
   try {

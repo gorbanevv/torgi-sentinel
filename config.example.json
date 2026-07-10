@@ -1,8 +1,10 @@
 {
   "telegramBotToken": "ВСТАВЬ_ТОКЕН_ОТ_BOTFATHER",
   "telegramChatId": "ВСТАВЬ_СВОЙ_CHAT_ID",
-  "pollIntervalMs": 3000,
+  "pollIntervalMs": 90000,
   "pageSize": 20,
+  "torgiMinRequestGapMs": 10000,
+  "torgiRequestJitterMs": 1000,
   "lotStatuses": ["PUBLISHED", "APPLICATIONS_SUBMISSION"],
   "filters": [
     {
@@ -13,6 +15,27 @@
       "realEstate": true
     },
     {
+      "name": "sev-land",
+      "displayName": "Севастополь · Земельные участки",
+      "dynSubjRF": "80",
+      "catCode": "2",
+      "realEstate": true
+    },
+    {
+      "name": "rostov-realty",
+      "displayName": "Ростовская область · Недвижимость",
+      "dynSubjRF": "63",
+      "catCode": "7",
+      "realEstate": true
+    },
+    {
+      "name": "rostov-land",
+      "displayName": "Ростовская область · Земельные участки",
+      "dynSubjRF": "63",
+      "catCode": "2",
+      "realEstate": true
+    },
+    {
       "name": "rostov-auto",
       "displayName": "Ростовская область · Автомобили и мототехника",
       "dynSubjRF": "63",
@@ -20,11 +43,25 @@
       "realEstate": false
     },
     {
-      "name": "sev-land",
-      "displayName": "Севастополь · Земельные участки",
-      "dynSubjRF": "80",
+      "name": "krasnodar-realty",
+      "displayName": "Краснодарский край · Недвижимость",
+      "dynSubjRF": "26",
+      "catCode": "7",
+      "realEstate": true
+    },
+    {
+      "name": "krasnodar-land",
+      "displayName": "Краснодарский край · Земельные участки",
+      "dynSubjRF": "26",
       "catCode": "2",
       "realEstate": true
+    },
+    {
+      "name": "krasnodar-auto",
+      "displayName": "Краснодарский край · Автомобили и мототехника",
+      "dynSubjRF": "26",
+      "catCode": "100",
+      "realEstate": false
     }
   ]
 }

@@ -18,13 +18,16 @@ function createPoller({
   pageSize = 20,
   maxCatchupPages = 5,
   maxSeedPages = 100,
-  maxBackoffMs = 60000,
-  alertThreshold = 3, // после стольких ошибок подряд шлём алерт (гистерезис против спама)
-  reportError = null, // (err) => void — вызывается один раз при достижении порога
+  maxBackoffMs = 600000,      // потолок паузы между повторами при затяжной беде (10 мин)
+  alertThreshold = 3,         // алерт не раньше стольких ошибок подряд…
+  alertSustainedMs = 300000,  // …И не раньше, чем беда продержится столько (не алертим мигание)
+  reportError = null, // (err) => void — сторож сам решает, слать ли (кулдаун/склейка)
   reportOk = null,    // () => void — при восстановлении после алерта
   sleep = (ms) => new Promise((r) => setTimeout(r, ms)),
+  now = Date.now,
 }) {
   let consecutiveErrors = 0;
+  let errorStreakStartAt = 0;
   let lastOkAt = null;
   let stopped = false;
 
@@ -40,6 +43,7 @@ function createPoller({
       for (const lot of lots) {
         if (!store.has(filter.name, lotId(lot))) { store.add(filter.name, lotId(lot)); added++; }
       }
+      store.save(); // прогресс постранично: упавший на середине засев доедет после ретрая/рестарта
       if (data.last || lots.length === 0) break;
     }
     store.markSeeded(filter.name);
@@ -85,23 +89,27 @@ function createPoller({
     while (!stopped) {
       try {
         const r = await pollOnce();
-        lastOkAt = Date.now();
+        lastOkAt = now();
         if (alerted && reportOk) { alerted = false; try { await reportOk(); } catch {} }
         consecutiveErrors = 0;
         if (r.notified > 0) log(`[${filter.name}] отправлено уведомлений: ${r.notified}`);
       } catch (e) {
         consecutiveErrors++;
-        // 5xx (503) — временный rate-limit/обслуживание torgi: мягкий повтор через интервал,
-        // НЕ раскручиваем backoff (иначе залипнем на 60с зря). Сеть/иное — растущий backoff.
-        const soft = /HTTP 5\d\d/.test(e.message);
+        if (consecutiveErrors === 1) errorStreakStartAt = now();
+        // 429/5xx — временный rate-limit/обслуживание torgi: первые повторы через обычный
+        // интервал, при затяжной серии пауза мягко растёт ×1.5 до потолка. Сеть/иное — жёстко ×2.
+        const soft = /HTTP (429|5\d\d)/.test(e.message);
         const backoff = soft
-          ? pollIntervalMs
+          ? Math.min(pollIntervalMs * 1.5 ** Math.max(0, consecutiveErrors - 3), maxBackoffMs)
           : Math.min(pollIntervalMs * 2 ** consecutiveErrors, maxBackoffMs);
         if (!soft || consecutiveErrors === 1 || consecutiveErrors % 20 === 0) {
           log(`[${filter.name}] ${soft ? '503/недоступен' : 'ошибка'} (${consecutiveErrors} подряд) — пауза ${backoff}мс`);
         }
-        // гистерезис: алерт один раз при достижении порога устойчивой ошибки
-        if (!alerted && consecutiveErrors >= alertThreshold && reportError) {
+        // алерт только про устойчивую беду: порог по числу И выдержка по времени.
+        // При затяжной ошибке повторяем report каждые 20 циклов — сторож сам решает,
+        // будить ли снова (кулдаун), чтобы многочасовая беда не осталась незамеченной.
+        const sustained = now() - errorStreakStartAt >= alertSustainedMs;
+        if (consecutiveErrors >= alertThreshold && sustained && reportError && (!alerted || consecutiveErrors % 20 === 0)) {
           alerted = true;
           try { await reportError(e); } catch {}
         }
