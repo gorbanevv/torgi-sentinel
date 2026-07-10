@@ -86,8 +86,15 @@ function createPoller({
         if (r.notified > 0) log(`[${filter.name}] отправлено уведомлений: ${r.notified}`);
       } catch (e) {
         consecutiveErrors++;
-        const backoff = Math.min(pollIntervalMs * 2 ** consecutiveErrors, maxBackoffMs);
-        log(`[${filter.name}] ошибка (${consecutiveErrors} подряд): ${e.message} — пауза ${backoff}мс`);
+        // 5xx (503) — временный rate-limit/обслуживание torgi: мягкий повтор через интервал,
+        // НЕ раскручиваем backoff (иначе залипнем на 60с зря). Сеть/иное — растущий backoff.
+        const soft = /HTTP 5\d\d/.test(e.message);
+        const backoff = soft
+          ? pollIntervalMs
+          : Math.min(pollIntervalMs * 2 ** consecutiveErrors, maxBackoffMs);
+        if (!soft || consecutiveErrors === 1 || consecutiveErrors % 20 === 0) {
+          log(`[${filter.name}] ${soft ? '503/недоступен' : 'ошибка'} (${consecutiveErrors} подряд) — пауза ${backoff}мс`);
+        }
         await sleep(backoff);
         continue;
       }
