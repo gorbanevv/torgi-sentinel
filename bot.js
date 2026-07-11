@@ -9,6 +9,7 @@ const { createTelegram } = require('./src/telegram');
 const { createPoller } = require('./src/poller');
 const { startHeartbeat } = require('./src/heartbeat');
 const { createAlerter } = require('./src/alerts');
+const { buildDigestText, msUntilNextMskHour } = require('./src/digest');
 
 function log(msg) {
   console.log(`${new Date().toISOString()} ${msg}`);
@@ -102,6 +103,41 @@ async function main() {
       log(`[heartbeat] ${groupLabel(members)}: последний успешный опрос ${age}, ошибок подряд: ${s.consecutiveErrors}, лоты: ${counts}`);
     });
   }, (cfg.heartbeatMinutes || 10) * 60 * 1000).unref();
+
+  // Суточный отчёт в Telegram: тишина перестаёт быть двусмысленной — отчёт с нулём
+  // значит «на torgi пусто», отсутствие отчёта в обычное время значит «бот лежит».
+  let digestPrev = { notified: 0, errors: 0, at: Date.now() };
+  async function sendDigest() {
+    let notified = 0;
+    let errors = 0;
+    for (const p of pollers) { const s = p.stats(); notified += s.totalNotified; errors += s.totalErrors; }
+    const groupsInfo = groupList.map((members, i) => {
+      const s = pollers[i].stats();
+      return {
+        label: groupLabel(members),
+        ageSec: s.lastOkAt ? Math.round((Date.now() - s.lastOkAt) / 1000) : null,
+        consecutiveErrors: s.consecutiveErrors,
+        counts: members.map((m) => ({ name: m.name, count: store.count(m.name) })),
+      };
+    });
+    const text = buildDigestText({
+      sinceHours: Math.max(1, Math.round((Date.now() - digestPrev.at) / 3600000)),
+      notified: notified - digestPrev.notified,
+      errors: errors - digestPrev.errors,
+      groups: groupsInfo,
+    });
+    digestPrev = { notified, errors, at: Date.now() };
+    try { await tg.sendMessage(text); log('суточный отчёт отправлен'); }
+    catch (e) { log(`суточный отчёт не отправился: ${e.message}`); }
+  }
+  if (Number.isInteger(cfg.digestHourMsk) && cfg.digestHourMsk >= 0 && cfg.digestHourMsk <= 23) {
+    const scheduleDigest = () => {
+      const t = setTimeout(async () => { await sendDigest(); scheduleDigest(); }, msUntilNextMskHour(cfg.digestHourMsk));
+      if (t.unref) t.unref();
+    };
+    scheduleDigest();
+    log(`суточный отчёт включён: ежедневно в ${cfg.digestHourMsk}:00 МСК`);
+  }
 
   const shutdown = (sig) => {
     log(`${sig} — сохраняю состояние и выхожу`);

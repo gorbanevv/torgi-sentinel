@@ -11,6 +11,8 @@ const DEFAULTS = {
   catchupPageSize: 100,
   maxCatchupPages: 25,
   heartbeatMinutes: 10,
+  // Час (МСК, 0-23) ежедневного отчёта «бот жив» в Telegram; вне диапазона = выключено.
+  digestHourMsk: 10,
   // «Опубликован» + «Приём заявок» — оба статуса ловим во всех фильтрах.
   lotStatuses: ['PUBLISHED', 'APPLICATIONS_SUBMISSION'],
   heartbeatUrl: '', // если задан (relay /heartbeat) — шлём «я жив» для watchdog

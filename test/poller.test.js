@@ -123,6 +123,46 @@ test('вся страница новая → листаем дальше до и
   assert.strictEqual(client.calls[1].page, 1);
 });
 
+// --- наблюдаемость: текст ошибки в логе, счётчики для суточного отчёта ---
+
+test('текст ошибки попадает в лог (не слепое «ошибка N подряд»)', async () => {
+  const logs = [];
+  const store = mkStore();
+  store.markSeeded('f1');
+  const client = { async searchLots() { throw new Error('torgi timeout 15000ms'); } };
+  const p = createPoller({
+    filter: FILTER, client, store, notifyLot: async () => {},
+    log: (m) => logs.push(m), pollIntervalMs: 90000,
+    sleep: async () => { p.stop(); },
+  });
+  await p.run();
+  assert.ok(logs.some((l) => l.includes('timeout 15000ms')), 'в логе виден текст ошибки: ' + logs.join(' | '));
+});
+
+test('stats: суммарные счётчики ошибок/уведомлений и последняя ошибка', async () => {
+  const store = mkStore();
+  store.add('f1', 'A_1');
+  store.markSeeded('f1');
+  let n = 0;
+  const client = {
+    async searchLots() {
+      if (n++ < 2) throw new Error('torgi HTTP 503: x');
+      return { content: [mkLot('B'), mkLot('A')], last: false };
+    },
+  };
+  let sleeps = 0;
+  const p = createPoller({
+    filter: FILTER, client, store, notifyLot: async () => {},
+    log: () => {}, pollIntervalMs: 90000,
+    sleep: async () => { if (++sleeps >= 3) p.stop(); },
+  });
+  await p.run();
+  const s = p.stats();
+  assert.strictEqual(s.totalErrors, 2, 'две ошибки посчитаны');
+  assert.strictEqual(s.totalNotified, 1, 'одно уведомление посчитано');
+  assert.ok(s.lastError && s.lastError.message.includes('503'), 'последняя ошибка сохранена');
+});
+
 // --- догон после простоя: досылаем всё, что появилось, пока бот молчал ---
 
 test('догон: пропущенная за простой пачка длиннее страницы доезжает до известного лота', async () => {
@@ -207,6 +247,57 @@ test('догон: конец списка (last) — не переполнени
   assert.strictEqual(r.truncated, false, 'дошли до конца списка — дыры нет');
   assert.strictEqual(overflow, null, 'сигнал переполнения не шлётся');
   assert.deepStrictEqual(notify.calls, ['A_1', 'B_1']);
+});
+
+// --- мердж-запрос упёрся в потолок → глубокий по-региональный догон (API режет size у мульти-региональных до 10) ---
+
+test('группа: исчерпание мердж-бюджета включает по-региональный догон, хронология по дате публикации', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const got = [];
+  store.add('g-sev', 'KS_1'); store.markSeeded('g-sev');
+  store.add('g-ros', 'KR_1'); store.markSeeded('g-ros');
+  const L = (key, subj, pub) => ({ ...mkRegLot(key, subj), noticeFirstVersionPublicationDate: pub });
+  // мердж: страница без единого известного → бюджет (1 страница) исчерпан
+  client.queue.push({ content: [L('R1', '61', '2026-07-11T14:00:00Z'), L('S1', '92', '2026-07-11T13:00:00Z')], last: false });
+  // по-региональный догон: сначала участник g-sev (80), затем g-ros (63)
+  client.queue.push({ content: [L('S1', '92', '2026-07-11T13:00:00Z'), L('KS', '92', '2026-07-01T00:00:00Z')], last: false });
+  client.queue.push({ content: [L('R1', '61', '2026-07-11T14:00:00Z'), L('R2', '61', '2026-07-11T12:00:00Z'), L('KR', '61', '2026-07-01T00:00:00Z')], last: false });
+
+  const p = createPoller({
+    members: MEMBERS, client, store,
+    notifyLot: async (lot, m) => { got.push(`${lot.id}@${m.name}`); },
+    log: () => {}, sleep: async () => {},
+    catchupPageSize: 2, maxCatchupPages: 1,
+  });
+  const r = await p.pollOnce();
+
+  assert.strictEqual(r.truncated, false, 'по-региональный догон дошёл до границы — дыры нет');
+  assert.deepStrictEqual(got, ['R2_1@g-ros', 'S1_1@g-sev', 'R1_1@g-ros'], 'старые→новые по дате публикации, свой фильтр');
+  assert.deepStrictEqual(client.calls[0].dynSubjRF, ['80', '63'], 'сначала мердж');
+  assert.strictEqual(client.calls[1].dynSubjRF, '80', 'затем по-региону: сев');
+  assert.strictEqual(client.calls[2].dynSubjRF, '63', 'затем ростов');
+});
+
+test('группа: и по-региональный догон упёрся → truncated (сигнал переполнения)', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  store.markSeeded('g-sev'); store.markSeeded('g-ros');
+  const L = (key, subj) => mkRegLot(key, subj);
+  client.queue.push({ content: [L('M1', '61'), L('M2', '92')], last: false }); // мердж: всё новое
+  client.queue.push({ content: [L('M2', '92'), L('S9', '92')], last: false }); // сев: всё новое, границы нет
+  client.queue.push({ content: [L('M1', '61'), L('R9', '61')], last: false }); // ростов: всё новое, границы нет
+
+  let overflow = null;
+  const p = createPoller({
+    members: MEMBERS, client, store,
+    notifyLot: async () => {}, log: () => {}, sleep: async () => {},
+    catchupPageSize: 2, maxCatchupPages: 1,
+    onCatchupOverflow: (n) => { overflow = n; },
+  });
+  const r = await p.pollOnce();
+  assert.strictEqual(r.truncated, true);
+  assert.strictEqual(overflow, 4, 'сообщили, сколько досталось');
 });
 
 // --- групповой опрос: одна категория, несколько регионов одним запросом ---

@@ -47,6 +47,10 @@ function createPoller({
   let errorStreakStartAt = 0;
   let lastOkAt = null;
   let stopped = false;
+  // накопительные счётчики для суточного отчёта
+  let totalErrors = 0;
+  let totalNotified = 0;
+  let lastError = null;
 
   function lotId(lot) {
     return lot.id || `${lot.noticeNumber}_${lot.lotNumber}`;
@@ -78,6 +82,26 @@ function createPoller({
   // границы «виденного», — пропущено за простой и подлежит досылке. Потолок глубокий, чтобы
   // покрыть долгий простой; если он всё же исчерпан, не встретив известного лота, — возможна
   // дыра (truncated): досылаем самые свежие, а о дыре сигналим отдельно.
+  //
+  // ВАЖНО: мульти-региональный запрос torgi молча режет size до 10 (одиночный уважает 100),
+  // поэтому при исчерпании мердж-бюджета переключаемся на глубокий по-региональный догон.
+  async function fetchMemberNewLots(m) {
+    const fresh = [];
+    let truncated = false;
+    for (let page = 0; page < maxCatchupPages; page++) {
+      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode, lotStatuses, size: catchupPageSize, page });
+      const lots = data.content || [];
+      let sawKnown = false;
+      for (const lot of lots) {
+        if (store.has(m.name, lotId(lot))) sawKnown = true;
+        else fresh.push({ lot, member: m });
+      }
+      if (sawKnown || data.last || lots.length === 0) break;
+      if (page === maxCatchupPages - 1) truncated = true;
+    }
+    return { fresh, truncated };
+  }
+
   async function fetchNewLots() {
     const fresh = [];
     const regionParam = multi ? list.map((m) => m.dynSubjRF) : list[0].dynSubjRF;
@@ -95,7 +119,21 @@ function createPoller({
       if (sawKnown || data.last || lots.length === 0) break;
       if (page === maxCatchupPages - 1) truncated = true; // упёрлись в потолок, известного так и нет
     }
-    return { fresh, truncated };
+    if (!truncated || !multi) return { fresh, truncated };
+
+    // Мердж-бюджет кончился, границы «виденного» нет (долгий простой) — добираем по каждому
+    // региону отдельно: там size=100 работает, глубины хватает на многодневный простой.
+    log(`[${name}] догон мерджем упёрся в потолок — включаю глубокий по-региональный догон`);
+    const deep = [];
+    let deepTruncated = false;
+    for (const m of list) {
+      const r = await fetchMemberNewLots(m);
+      deep.push(...r.fresh);
+      if (r.truncated) deepTruncated = true;
+    }
+    const pubTs = (x) => Date.parse(x.lot.noticeFirstVersionPublicationDate || x.lot.createDate || '') || 0;
+    deep.sort((a, b) => pubTs(b) - pubTs(a)); // новые сверху — вызывающий перевернёт в хронологию
+    return { fresh: deep, truncated: deepTruncated };
   }
 
   async function pollOnce() {
@@ -127,11 +165,15 @@ function createPoller({
       try {
         const r = await pollOnce();
         lastOkAt = now();
+        totalNotified += r.notified;
         if (alerted && reportOk) { alerted = false; try { await reportOk(); } catch {} }
         consecutiveErrors = 0;
         if (r.notified > 0) log(`[${name}] отправлено уведомлений: ${r.notified}`);
       } catch (e) {
         consecutiveErrors++;
+        totalErrors++;
+        const brief = String((e && e.message) || e).slice(0, 140);
+        lastError = { at: now(), message: brief };
         if (consecutiveErrors === 1) errorStreakStartAt = now();
         // 429/5xx — временный rate-limit/обслуживание torgi: первые повторы через обычный
         // интервал, при затяжной серии пауза мягко растёт ×1.5 до потолка. Сеть/иное — жёстко ×2.
@@ -140,7 +182,7 @@ function createPoller({
           ? Math.min(pollIntervalMs * 1.5 ** Math.max(0, consecutiveErrors - 3), maxBackoffMs)
           : Math.min(pollIntervalMs * 2 ** consecutiveErrors, maxBackoffMs);
         if (!soft || consecutiveErrors === 1 || consecutiveErrors % 20 === 0) {
-          log(`[${name}] ${soft ? '503/недоступен' : 'ошибка'} (${consecutiveErrors} подряд) — пауза ${backoff}мс`);
+          log(`[${name}] ${soft ? '503/недоступен' : 'ошибка'} (${consecutiveErrors} подряд) — пауза ${backoff}мс: ${brief}`);
         }
         // алерт только про устойчивую беду: порог по числу И выдержка по времени.
         // При затяжной ошибке повторяем report каждые 20 циклов — сторож сам решает,
@@ -161,7 +203,7 @@ function createPoller({
     pollOnce,
     run,
     stop: () => { stopped = true; },
-    stats: () => ({ consecutiveErrors, lastOkAt }),
+    stats: () => ({ consecutiveErrors, lastOkAt, totalErrors, totalNotified, lastError }),
   };
 }
 
