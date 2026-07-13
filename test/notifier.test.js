@@ -38,6 +38,22 @@ function mkFakes({ failDownload = [], failGroup = false, failPhoto = false, fail
   return { client, tg };
 }
 
+test('потолок фото: качаем и шлём только первые maxPhotos (скорость дороже полноты)', async () => {
+  const { client, tg } = mkFakes();
+  const n = createNotifier({ client, tg, log: () => {}, maxPhotos: 3 });
+  await n.notifyLot(mkLot(['a', 'b', 'c', 'd', 'e']), FILTER);
+  assert.deepStrictEqual(client.downloads, ['a', 'b', 'c'], 'лишние фото даже не скачиваются');
+  assert.strictEqual(tg.calls[0].m, 'group');
+  assert.strictEqual(tg.calls[0].n, 3);
+});
+
+test('потолок фото по умолчанию = 3', async () => {
+  const { client, tg } = mkFakes();
+  const n = createNotifier({ client, tg, log: () => {} });
+  await n.notifyLot(mkLot(['a', 'b', 'c', 'd', 'e', 'f', 'g']), FILTER);
+  assert.strictEqual(client.downloads.length, 3);
+});
+
 test('несколько фото → одним альбомом, подпись на первом', async () => {
   const { client, tg } = mkFakes();
   const n = createNotifier({ client, tg, log: () => {} });

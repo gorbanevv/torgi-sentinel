@@ -2,7 +2,7 @@
 
 const { formatLotMessage, stripHtml } = require('./formatter');
 
-// Доставка одного лота: альбом всех фото (до 10) → одно фото → текст → текст без разметки.
+// Доставка одного лота: альбом фото (до maxPhotos) → одно фото → текст → текст без разметки.
 //
 // Фото качаем сами через общий дозатор запросов: Telegram НЕ может забрать их с torgi
 // по URL (датацентры Telegram в блоклисте torgi + сертификат Минцифры — проверено,
@@ -10,12 +10,15 @@ const { formatLotMessage, stripHtml } = require('./formatter');
 // лимитом IP, что и поиск, поэтому на каждую картинку — одна попытка: не скачалась —
 // пропускаем, альбом уходит с тем, что уцелело. Ни одна проблема с фото не блокирует
 // доставку самого уведомления.
-function createNotifier({ client, tg, log = () => {} }) {
+//
+// maxPhotos по умолчанию 3: каждая картинка стоит ~10с очереди дозатора, скорость
+// уведомления дороже полноты галереи (решение пользователя 2026-07-12).
+function createNotifier({ client, tg, log = () => {}, maxPhotos = 3 }) {
   async function notifyLot(lot, filter) {
     const { text, imageIds } = formatLotMessage(lot, filter);
 
     const photos = [];
-    for (const id of imageIds) {
+    for (const id of imageIds.slice(0, Math.max(0, maxPhotos))) {
       try {
         photos.push(await client.downloadImage(id));
       } catch (e) {

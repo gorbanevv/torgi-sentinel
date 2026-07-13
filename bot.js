@@ -28,8 +28,8 @@ async function main() {
     apiBase: cfg.telegramApiBase,
   });
 
-  // Доставка одного лота: альбом всех фото (до 10) → одно фото → текст → plain.
-  const { notifyLot } = createNotifier({ client: torgi, tg, log });
+  // Доставка одного лота: альбом фото (до maxPhotosPerLot) → одно фото → текст → plain.
+  const { notifyLot } = createNotifier({ client: torgi, tg, log, maxPhotos: cfg.maxPhotosPerLot });
 
   // Сторож ошибок: при устойчивой ошибке шлёт понятный алерт в Telegram, при возврате — «восстановлено».
   const alerter = createAlerter({ tg, log, cooldownMs: cfg.alertCooldownMs, flushDelayMs: cfg.alertFlushMs });

@@ -74,5 +74,6 @@
       "realEstate": false,
       "subjectRFCode": "23"
     }
-  ]
+  ],
+  "maxPhotosPerLot": 3
 }
