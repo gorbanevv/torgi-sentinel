@@ -54,12 +54,12 @@ const { formatLotMessage, stripHtml } = require('../src/formatter');
     const magic = img.buffer.slice(0, 2).toString('hex');
     check(magic === 'ffd8' || magic === '8950', `картинка скачана: ${img.buffer.length} байт, ${img.contentType}`);
 
-    const { text, imageId } = formatLotMessage(lotWithImg, {
+    const { text, imageIds } = formatLotMessage(lotWithImg, {
       name: 'preview',
       displayName: 'Предпросмотр (недвижимость)',
       realEstate: true,
     });
-    check(text.includes('lots/lot/') && Boolean(imageId), 'форматтер собрал сообщение с фото');
+    check(text.includes('lots/lot/') && imageIds.length > 0, 'форматтер собрал сообщение с фото');
     console.log('\n---------- ПРЕДПРОСМОТР СООБЩЕНИЯ ----------');
     console.log(stripHtml(text));
     console.log('--------------------------------------------\n');

@@ -110,14 +110,16 @@ function buildLines(lot, filter, { withDescription = true, withAddress = true } 
   return lines.join('\n');
 }
 
+const MAX_PHOTOS = 10; // потолок альбома Telegram — больше в одно сообщение не влезает
+
 function formatLotMessage(lot, filter) {
-  const imageId = Array.isArray(lot.lotImages) && lot.lotImages.length > 0 ? lot.lotImages[0] : null;
-  const limit = imageId ? CAPTION_LIMIT : TEXT_LIMIT;
+  const imageIds = Array.isArray(lot.lotImages) ? lot.lotImages.filter(Boolean).slice(0, MAX_PHOTOS) : [];
+  const limit = imageIds.length > 0 ? CAPTION_LIMIT : TEXT_LIMIT;
   let text = buildLines(lot, filter);
   if (text.length > limit) text = buildLines(lot, filter, { withDescription: false });
   if (text.length > limit) text = buildLines(lot, filter, { withDescription: false, withAddress: false });
   if (text.length > limit) text = text.slice(0, limit - 1) + '…'; // крайний случай
-  return { text, imageId };
+  return { text, imageIds };
 }
 
 module.exports = {
@@ -131,4 +133,5 @@ module.exports = {
   extractAddress,
   CAPTION_LIMIT,
   TEXT_LIMIT,
+  MAX_PHOTOS,
 };

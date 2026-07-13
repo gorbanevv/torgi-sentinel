@@ -38,14 +38,21 @@ function fixtureLot(overrides = {}) {
 }
 
 test('полное сообщение: площадь, цена, дата МСК, адрес, ссылка, фото', () => {
-  const { text, imageId } = formatLotMessage(fixtureLot(), filterRealty);
+  const { text, imageIds } = formatLotMessage(fixtureLot(), filterRealty);
   assert.ok(text.includes('1281 кв. м'), 'площадь с единицей');
   assert.ok(text.includes('2 100 892 000 ₽'), 'цена с разбивкой тысяч');
   assert.ok(text.includes('13.07.2026 17:45 МСК'), 'UTC 14:45 → МСК 17:45');
   assert.ok(text.includes('г. Севастополь, ул. Ленина, 1'), 'адрес');
   assert.ok(text.includes('https://torgi.gov.ru/new/public/lots/lot/21000018600000001234_1'), 'ссылка на лот');
   assert.ok(text.includes('Электронный аукцион'), 'форма торгов');
-  assert.strictEqual(imageId, '69006841e87a5339369bc20d');
+  assert.deepStrictEqual(imageIds, ['69006841e87a5339369bc20d']);
+});
+
+test('все фото лота отдаются списком, максимум 10 (лимит альбома Telegram)', () => {
+  const many = Array.from({ length: 17 }, (_, i) => 'img' + i);
+  const { imageIds } = formatLotMessage(fixtureLot({ lotImages: many }), filterRealty);
+  assert.strictEqual(imageIds.length, 10, 'обрезано до 10');
+  assert.deepStrictEqual(imageIds, many.slice(0, 10), 'первые 10, порядок сохранён');
 });
 
 test('HTML в названии лота экранируется', () => {
@@ -54,9 +61,9 @@ test('HTML в названии лота экранируется', () => {
   assert.ok(!text.includes('<площадь'));
 });
 
-test('лот без фото → imageId null, лимит 4096', () => {
-  const { imageId } = formatLotMessage(fixtureLot({ lotImages: [] }), filterRealty);
-  assert.strictEqual(imageId, null);
+test('лот без фото → imageIds пуст, лимит 4096', () => {
+  const { imageIds } = formatLotMessage(fixtureLot({ lotImages: [] }), filterRealty);
+  assert.deepStrictEqual(imageIds, []);
 });
 
 test('лот без цены и без характеристик не падает', () => {

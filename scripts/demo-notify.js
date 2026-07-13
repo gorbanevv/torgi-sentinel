@@ -24,16 +24,26 @@ const { createTelegram } = require('../src/telegram');
   }
   if (!chosen) { console.log('нет лотов для показа'); return; }
 
-  const { text, imageId } = formatLotMessage(chosen, chosenFilter);
+  const { text, imageIds } = formatLotMessage(chosen, chosenFilter);
   const header = 'ℹ️ <b>Демонстрация карточки</b> (существующий лот, не новый)\n\n';
-  if (imageId) {
+  if (imageIds.length > 0) {
     try {
-      const img = await torgi.downloadImage(imageId);
-      await tg.sendPhoto(img.buffer, img.contentType, header + text);
-      console.log('отправлено с фото, фильтр:', chosenFilter.name, 'лот:', chosen.id);
-      return;
+      const photos = [];
+      for (const id of imageIds) {
+        try { photos.push(await torgi.downloadImage(id)); } catch (e) { console.log('фото', id, 'пропущено:', e.message); }
+      }
+      if (photos.length >= 2) {
+        await tg.sendMediaGroup(photos, header + text);
+        console.log(`отправлен альбом из ${photos.length} фото, фильтр:`, chosenFilter.name, 'лот:', chosen.id);
+        return;
+      }
+      if (photos.length === 1) {
+        await tg.sendPhoto(photos[0].buffer, photos[0].contentType, header + text);
+        console.log('отправлено с фото, фильтр:', chosenFilter.name, 'лот:', chosen.id);
+        return;
+      }
     } catch (e) {
-      console.log('фото не приложилось:', e.message, '— шлю текстом');
+      console.log('фото не приложились:', e.message, '— шлю текстом');
     }
   }
   await tg.sendMessage(header + text);

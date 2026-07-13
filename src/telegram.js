@@ -50,17 +50,20 @@ function createTelegram({
     return httpPost(`${apiBase}/bot${botToken}/${method}`, body, 'application/json');
   }
 
-  function multipart(fields, file) {
+  function multipart(fields, files) {
     const boundary = '----TorgiSentinel' + Math.random().toString(16).slice(2);
     const parts = [];
     for (const [k, v] of Object.entries(fields)) {
       parts.push(Buffer.from(`--${boundary}\r\nContent-Disposition: form-data; name="${k}"\r\n\r\n${v}\r\n`));
     }
-    parts.push(Buffer.from(
-      `--${boundary}\r\nContent-Disposition: form-data; name="${file.name}"; filename="${file.filename}"\r\nContent-Type: ${file.contentType}\r\n\r\n`
-    ));
-    parts.push(file.buffer);
-    parts.push(Buffer.from(`\r\n--${boundary}--\r\n`));
+    for (const file of files) {
+      parts.push(Buffer.from(
+        `--${boundary}\r\nContent-Disposition: form-data; name="${file.name}"; filename="${file.filename}"\r\nContent-Type: ${file.contentType}\r\n\r\n`
+      ));
+      parts.push(file.buffer);
+      parts.push(Buffer.from('\r\n'));
+    }
+    parts.push(Buffer.from(`--${boundary}--\r\n`));
     return { buffer: Buffer.concat(parts), contentType: `multipart/form-data; boundary=${boundary}` };
   }
 
@@ -97,12 +100,39 @@ function createTelegram({
   function sendPhoto(photoBuffer, contentType, caption) {
     const { buffer, contentType: ct } = multipart(
       { chat_id: String(chatId), caption, parse_mode: 'HTML' },
-      { name: 'photo', filename: 'photo.jpg', contentType: contentType || 'image/jpeg', buffer: photoBuffer }
+      [{ name: 'photo', filename: 'photo.jpg', contentType: contentType || 'image/jpeg', buffer: photoBuffer }]
     );
     return callWithRetry(() => httpPost(`${apiBase}/bot${botToken}/sendPhoto`, buffer, ct), 'sendPhoto');
   }
 
-  return { sendMessage, sendMessagePlain, sendPhoto };
+  // Альбом 2..10 фото одним сообщением; подпись — на первом элементе.
+  function sendMediaGroup(photos, caption) {
+    const { media, files } = buildMediaGroup(photos, caption);
+    const { buffer, contentType } = multipart(
+      { chat_id: String(chatId), media: JSON.stringify(media) },
+      files
+    );
+    return callWithRetry(() => httpPost(`${apiBase}/bot${botToken}/sendMediaGroup`, buffer, contentType), 'sendMediaGroup');
+  }
+
+  return { sendMessage, sendMessagePlain, sendPhoto, sendMediaGroup };
 }
 
-module.exports = { createTelegram };
+// Чистая сборка альбома: media-массив для API + файловые части (attach://pN).
+// Подпись и parse_mode Telegram принимает только на первом элементе альбома.
+function buildMediaGroup(photos, caption) {
+  const media = photos.map((p, i) => ({
+    type: 'photo',
+    media: `attach://p${i}`,
+    ...(i === 0 ? { caption, parse_mode: 'HTML' } : {}),
+  }));
+  const files = photos.map((p, i) => ({
+    name: `p${i}`,
+    filename: `p${i}.jpg`,
+    contentType: p.contentType || 'image/jpeg',
+    buffer: p.buffer,
+  }));
+  return { media, files };
+}
+
+module.exports = { createTelegram, buildMediaGroup };

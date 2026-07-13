@@ -4,8 +4,9 @@ const { loadConfig } = require('./src/config');
 const { createRateLimiter } = require('./src/rateLimiter');
 const { createTorgiClient } = require('./src/torgiClient');
 const { createStore } = require('./src/store');
-const { formatLotMessage, stripHtml, escapeHtml } = require('./src/formatter');
+const { escapeHtml } = require('./src/formatter');
 const { createTelegram } = require('./src/telegram');
+const { createNotifier } = require('./src/notifier');
 const { createPoller } = require('./src/poller');
 const { startHeartbeat } = require('./src/heartbeat');
 const { createAlerter } = require('./src/alerts');
@@ -27,25 +28,8 @@ async function main() {
     apiBase: cfg.telegramApiBase,
   });
 
-  // Доставка одного лота: фото → при любой проблеме текст → при проблеме HTML — plain.
-  async function notifyLot(lot, filter) {
-    const { text, imageId } = formatLotMessage(lot, filter);
-    if (imageId) {
-      try {
-        const img = await torgi.downloadImage(imageId);
-        await tg.sendPhoto(img.buffer, img.contentType, text);
-        return;
-      } catch (e) {
-        log(`[${filter.name}] фото не приложилось (${e.message}) — отправляю текстом`);
-      }
-    }
-    try {
-      await tg.sendMessage(text);
-    } catch (e) {
-      log(`[${filter.name}] HTML-сообщение не прошло (${e.message}) — пробую без разметки`);
-      await tg.sendMessagePlain(stripHtml(text));
-    }
-  }
+  // Доставка одного лота: альбом всех фото (до 10) → одно фото → текст → plain.
+  const { notifyLot } = createNotifier({ client: torgi, tg, log });
 
   // Сторож ошибок: при устойчивой ошибке шлёт понятный алерт в Telegram, при возврате — «восстановлено».
   const alerter = createAlerter({ tg, log, cooldownMs: cfg.alertCooldownMs, flushDelayMs: cfg.alertFlushMs });
