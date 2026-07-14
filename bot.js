@@ -8,6 +8,7 @@ const { escapeHtml } = require('./src/formatter');
 const { createTelegram } = require('./src/telegram');
 const { createNotifier } = require('./src/notifier');
 const { createPoller } = require('./src/poller');
+const { groupFilters, groupLabel } = require('./src/grouping');
 const { startHeartbeat } = require('./src/heartbeat');
 const { createAlerter } = require('./src/alerts');
 const { buildDigestText, msUntilNextMskHour } = require('./src/digest');
@@ -34,23 +35,9 @@ async function main() {
   // Сторож ошибок: при устойчивой ошибке шлёт понятный алерт в Telegram, при возврате — «восстановлено».
   const alerter = createAlerter({ tg, log, cooldownMs: cfg.alertCooldownMs, flushDelayMs: cfg.alertFlushMs });
 
-  // Группируем фильтры по категории: одна категория по всем её регионам = ОДИН запрос
-  // (API объединяет повторяющиеся dynSubjRF) — 3 запроса на цикл вместо 8, интервал 30с.
-  const groups = new Map();
-  for (const f of cfg.filters) {
-    const key = String(f.catCode);
-    if (!groups.has(key)) groups.set(key, []);
-    groups.get(key).push(f);
-  }
-  const groupList = [...groups.values()];
-
-  // «Регион · Категория» → «Категория — Регион, Регион» для логов и алертов
-  function groupLabel(members) {
-    if (members.length === 1) return members[0].displayName;
-    const cat = (members[0].displayName.split('·')[1] || `категория ${members[0].catCode}`).trim();
-    const regions = members.map((m) => (m.displayName.split('·')[0] || m.name).trim());
-    return `${cat} — ${regions.join(', ')}`;
-  }
+  // Линии опроса: регионы одной категории — одним запросом; город-фильтры (fiasGUID) —
+  // отдельными линиями (см. src/grouping.js). Число линий × интервал держим под лимитом IP.
+  const groupList = groupFilters(cfg.filters);
 
   const pollers = groupList.map((members) => {
     const label = groupLabel(members);

@@ -1,7 +1,7 @@
 {
   "telegramBotToken": "ВСТАВЬ_ТОКЕН_ОТ_BOTFATHER",
   "telegramChatId": "ВСТАВЬ_СВОЙ_CHAT_ID",
-  "pollIntervalMs": 30000,
+  "pollIntervalMs": 75000,
   "pageSize": 20,
   "torgiMinRequestGapMs": 10000,
   "torgiRequestJitterMs": 1000,
@@ -52,19 +52,21 @@
     },
     {
       "name": "krasnodar-realty",
-      "displayName": "Краснодарский край · Недвижимость",
+      "displayName": "г. Краснодар · Недвижимость",
       "dynSubjRF": "26",
       "catCode": "7",
       "realEstate": true,
-      "subjectRFCode": "23"
+      "subjectRFCode": "23",
+      "fiasGUID": "7dfa745e-aa19-4688-b121-b655c11e482f"
     },
     {
       "name": "krasnodar-land",
-      "displayName": "Краснодарский край · Земельные участки",
+      "displayName": "г. Краснодар · Земельные участки",
       "dynSubjRF": "26",
       "catCode": "2",
       "realEstate": true,
-      "subjectRFCode": "23"
+      "subjectRFCode": "23",
+      "fiasGUID": "7dfa745e-aa19-4688-b121-b655c11e482f"
     },
     {
       "name": "krasnodar-auto",
@@ -73,6 +75,24 @@
       "catCode": "100",
       "realEstate": false,
       "subjectRFCode": "23"
+    },
+    {
+      "name": "sochi-realty",
+      "displayName": "г. Сочи · Недвижимость",
+      "dynSubjRF": "26",
+      "catCode": "7",
+      "realEstate": true,
+      "subjectRFCode": "23",
+      "fiasGUID": "79da737a-603b-4c19-9b54-9114c96fb912"
+    },
+    {
+      "name": "sochi-land",
+      "displayName": "г. Сочи · Земельные участки",
+      "dynSubjRF": "26",
+      "catCode": "2",
+      "realEstate": true,
+      "subjectRFCode": "23",
+      "fiasGUID": "79da737a-603b-4c19-9b54-9114c96fb912"
     }
   ],
   "maxPhotosPerLot": 3

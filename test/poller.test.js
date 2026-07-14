@@ -249,6 +249,27 @@ test('догон: конец списка (last) — не переполнени
   assert.deepStrictEqual(notify.calls, ['A_1', 'B_1']);
 });
 
+// --- фильтр по городу: fiasGUID члена группы уходит в запросы ---
+
+test('город-фильтр: fiasGUID передаётся в опрос и в засев', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkNotify();
+  const CITY = { name: 'sochi-realty', displayName: 'г. Сочи · Недвижимость', dynSubjRF: '26', subjectRFCode: '23', catCode: '7', fiasGUID: 'guid-sochi', realEstate: true };
+
+  const p = createPoller({
+    filter: CITY, client, store, notifyLot: notify.notifyLot,
+    log: () => {}, sleep: async () => {},
+  });
+  client.queue.push({ content: [mkLot('S1')], last: true }); // засев
+  await p.pollOnce();
+  assert.strictEqual(client.calls[0].fiasGUID, 'guid-sochi', 'засев с городом');
+
+  client.queue.push({ content: [mkLot('S1')], last: true }); // обычный цикл
+  await p.pollOnce();
+  assert.strictEqual(client.calls[1].fiasGUID, 'guid-sochi', 'опрос с городом');
+});
+
 // --- мердж-запрос упёрся в потолок → глубокий по-региональный догон (API режет size у мульти-региональных до 10) ---
 
 test('группа: исчерпание мердж-бюджета включает по-региональный догон, хронология по дате публикации', async () => {

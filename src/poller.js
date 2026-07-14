@@ -40,6 +40,8 @@ function createPoller({
   if (list.length === 0) throw new Error('poller: нужен filter или непустой members');
   const name = groupName || list.map((m) => m.name).join('+');
   const catCode = list[0].catCode;
+  // город-фильтр (ФИАС): у всех участников линии он одинаков — за это отвечает groupFilters
+  const fiasGUID = list[0].fiasGUID || undefined;
   const multi = list.length > 1;
   const byRegion = new Map(list.map((m) => [String(m.subjectRFCode), m]));
 
@@ -65,7 +67,7 @@ function createPoller({
   async function seedMember(m) {
     let added = 0;
     for (let page = 0; page < maxSeedPages; page++) {
-      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode, lotStatuses, size: 100, page });
+      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode, fiasGUID: m.fiasGUID || undefined, lotStatuses, size: 100, page });
       const lots = data.content || [];
       for (const lot of lots) {
         if (!store.has(m.name, lotId(lot))) { store.add(m.name, lotId(lot)); added++; }
@@ -89,7 +91,7 @@ function createPoller({
     const fresh = [];
     let truncated = false;
     for (let page = 0; page < maxCatchupPages; page++) {
-      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode, lotStatuses, size: catchupPageSize, page });
+      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode, fiasGUID: m.fiasGUID || undefined, lotStatuses, size: catchupPageSize, page });
       const lots = data.content || [];
       let sawKnown = false;
       for (const lot of lots) {
@@ -107,7 +109,7 @@ function createPoller({
     const regionParam = multi ? list.map((m) => m.dynSubjRF) : list[0].dynSubjRF;
     let truncated = false;
     for (let page = 0; page < maxCatchupPages; page++) {
-      const data = await client.searchLots({ dynSubjRF: regionParam, catCode, lotStatuses, size: catchupPageSize, page });
+      const data = await client.searchLots({ dynSubjRF: regionParam, catCode, fiasGUID, lotStatuses, size: catchupPageSize, page });
       const lots = data.content || [];
       let sawKnown = false;
       for (const lot of lots) {

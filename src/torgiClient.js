@@ -5,15 +5,20 @@ const BASE = 'https://torgi.gov.ru';
 
 // Параметры подтверждены вживую: lotStatus и dynSubjRF (повтор параметра = объединение
 // значений — несколько статусов/регионов одним запросом), catCode (строго один),
-// page (0-based), sort. dynSubjRF: строка или массив строк.
+// page (0-based), sort, fiasGUID (фильтр «Местонахождение имущества» — ФИАС-код города,
+// тот же параметр шлёт сам сайт; найден в JS-бандле портала, проверен вживую:
+// Краснодар 7dfa745e-…, Сочи 79da737a-…). dynSubjRF: строка или массив строк.
 const DEFAULT_STATUSES = ['PUBLISHED', 'APPLICATIONS_SUBMISSION'];
-function buildSearchQuery({ dynSubjRF, catCode, size = 20, page = 0, lotStatuses = DEFAULT_STATUSES } = {}) {
+function buildSearchQuery({ dynSubjRF, catCode, fiasGUID, size = 20, page = 0, lotStatuses = DEFAULT_STATUSES } = {}) {
   const q = new URLSearchParams();
   for (const st of lotStatuses.length ? lotStatuses : DEFAULT_STATUSES) q.append('lotStatus', st);
   for (const r of Array.isArray(dynSubjRF) ? dynSubjRF : [dynSubjRF]) {
     if (r !== undefined && r !== null && String(r) !== '') q.append('dynSubjRF', String(r));
   }
   if (catCode !== undefined && catCode !== null && String(catCode) !== '') q.set('catCode', String(catCode));
+  for (const g of Array.isArray(fiasGUID) ? fiasGUID : [fiasGUID]) {
+    if (g !== undefined && g !== null && String(g) !== '') q.append('fiasGUID', String(g));
+  }
   q.set('size', String(size));
   q.set('page', String(page));
   q.set('sort', 'firstVersionPublicationDate,desc');

@@ -62,19 +62,20 @@ function loadConfig(configPath) {
     f.displayName = f.displayName || f.name;
   }
   // Групповой опрос (несколько регионов одной категории одним запросом) раскладывает лоты
-  // по subjectRFCode из карточки — он обязателен, когда категория встречается более 1 раза.
-  const byCat = new Map();
+  // по subjectRFCode из карточки — он обязателен, когда в линии больше одного фильтра.
+  // Линия = catCode + fiasGUID (город-фильтры живут отдельными линиями, см. grouping.js).
+  const byLane = new Map();
   for (const f of cfg.filters) {
-    const k = String(f.catCode);
-    if (!byCat.has(k)) byCat.set(k, []);
-    byCat.get(k).push(f);
+    const k = `${f.catCode}|${f.fiasGUID || ''}`;
+    if (!byLane.has(k)) byLane.set(k, []);
+    byLane.get(k).push(f);
   }
-  for (const [cat, members] of byCat) {
+  for (const [lane, members] of byLane) {
     if (members.length < 2) continue;
     for (const f of members) {
       if (!f.subjectRFCode) {
         throw new Error(
-          `config: фильтру ${f.name} нужен subjectRFCode для группового опроса категории ${cat} ` +
+          `config: фильтру ${f.name} нужен subjectRFCode для групповой линии ${lane} ` +
           `(код региона в карточках лотов: Севастополь=92, Ростовская обл.=61, Краснодарский край=23)`
         );
       }
