@@ -249,6 +249,107 @@ test('догон: конец списка (last) — не переполнени
   assert.deepStrictEqual(notify.calls, ['A_1', 'B_1']);
 });
 
+// --- универсальная линия: один запрос без категории на все регионы, раскладка классификатором ---
+
+const UNI_MEMBERS = [
+  { name: 'u-sev-realty', displayName: 'Севастополь · Недвижимость', dynSubjRF: '80', subjectRFCode: '92', catCode: '7' },
+  { name: 'u-rostov-land', displayName: 'Ростов · Земля', dynSubjRF: '63', subjectRFCode: '61', catCode: '2' },
+  { name: 'u-kk-auto', displayName: 'КК · Авто', dynSubjRF: '26', subjectRFCode: '23', catCode: '100' },
+];
+
+function uniLot(key, subj, cat) {
+  return { id: `${key}_1`, noticeNumber: key, lotNumber: 1, lotName: 'Лот ' + key, subjectRFCode: subj, category: { code: cat } };
+}
+
+// классификатор-стенд: регион+категория → фильтр (как настоящий, но синхронный и без сети)
+function uniClassify(lot) {
+  return UNI_MEMBERS.filter((m) => m.subjectRFCode === String(lot.subjectRFCode) && (
+    (m.catCode === '7' && ['7', '8', '9', '11'].includes(lot.category.code)) ||
+    (m.catCode === '2' && ['2', '301', '307'].includes(lot.category.code)) ||
+    (m.catCode === '100' && ['100', '100001'].includes(lot.category.code))
+  ));
+}
+
+function mkUniPoller({ client, store, notify }) {
+  for (const m of UNI_MEMBERS) store.markSeeded(m.name);
+  return createPoller({
+    members: UNI_MEMBERS, classify: uniClassify,
+    client, store, notifyLot: notify.notifyLot,
+    log: () => {}, sleep: async () => {},
+  });
+}
+
+test('универсал: запрос без catCode, регионы уникальны, раскладка по фильтрам', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkGroupNotify();
+  store.markSeeded('_all');
+  store.add('_all', 'OLD_1');
+  const p = mkUniPoller({ client, store, notify });
+
+  client.queue.push({ content: [uniLot('A', '61', '301'), uniLot('B', '92', '9'), uniLot('X', '23', '404'), uniLot('OLD', '61', '301')], last: false });
+  const r = await p.pollOnce();
+
+  assert.strictEqual(client.calls[0].catCode, undefined, 'категория в запросе не указана');
+  assert.deepStrictEqual(client.calls[0].dynSubjRF, ['80', '63', '26'], 'регионы уникальным списком');
+  assert.strictEqual(r.notified, 2);
+  assert.deepStrictEqual(notify.calls.sort(), ['A_1@u-rostov-land', 'B_1@u-sev-realty'], 'каждому лоту — свой фильтр');
+  assert.ok(store.has('_all', 'X_1'), 'чужая категория помечена в _all и не будет решаться заново');
+  assert.ok(store.has('_all', 'A_1') && store.has('u-rostov-land', 'A_1'));
+});
+
+test('универсал: граница страницы — по общей корзине _all, а не по фильтрам', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkGroupNotify();
+  store.markSeeded('_all');
+  store.add('_all', 'JUNK_1'); // виденный лот ЧУЖОЙ категории — тоже граница
+  const p = mkUniPoller({ client, store, notify });
+
+  client.queue.push({ content: [uniLot('N', '61', '301'), uniLot('JUNK', '23', '404')], last: false });
+  await p.pollOnce();
+  assert.strictEqual(client.calls.length, 1, 'дальше не листали — упёрлись в виденный');
+  assert.deepStrictEqual(notify.calls, ['N_1@u-rostov-land']);
+});
+
+test('универсал: первый запуск — _all засевается по каждому региону отдельно, без уведомлений', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkGroupNotify();
+  for (const m of UNI_MEMBERS) store.markSeeded(m.name);
+  const p = createPoller({
+    members: UNI_MEMBERS, classify: uniClassify,
+    client, store, notifyLot: notify.notifyLot, log: () => {}, sleep: async () => {},
+  });
+  client.queue.push({ content: [uniLot('S1', '92', '9')], last: true });   // регион 80
+  client.queue.push({ content: [uniLot('R1', '61', '301')], last: true }); // регион 63
+  client.queue.push({ content: [uniLot('K1', '23', '404')], last: true }); // регион 26
+
+  const r = await p.pollOnce();
+  assert.strictEqual(r.seeded, true);
+  assert.strictEqual(notify.calls.length, 0, 'засев тихий');
+  assert.deepStrictEqual(client.calls.map((c) => c.dynSubjRF), ['80', '63', '26'], 'по-региональный засев');
+  assert.strictEqual(client.calls[0].catCode, undefined, 'засев тоже без категории');
+  assert.ok(store.isSeeded('_all'));
+  assert.ok(store.has('_all', 'S1_1') && store.has('_all', 'K1_1'), 'всё виденное в _all, включая чужие категории');
+});
+
+test('универсал: классификатор бросил (деталь недоступна) → цикл падает, лот не потерян', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkGroupNotify();
+  store.markSeeded('_all');
+  for (const m of UNI_MEMBERS) store.markSeeded(m.name);
+  const p = createPoller({
+    members: UNI_MEMBERS,
+    classify: async () => { throw new Error('torgi HTTP 503: деталь'); },
+    client, store, notifyLot: notify.notifyLot, log: () => {}, sleep: async () => {},
+  });
+  client.queue.push({ content: [uniLot('N', '61', '301')], last: true });
+  await assert.rejects(() => p.pollOnce(), /503/);
+  assert.strictEqual(store.has('_all', 'N_1'), false, 'не помечен — будет разобран в следующем цикле');
+});
+
 // --- фильтр по городу: fiasGUID члена группы уходит в запросы ---
 
 test('город-фильтр: fiasGUID передаётся в опрос и в засев', async () => {

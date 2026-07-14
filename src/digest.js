@@ -20,7 +20,8 @@ function msUntilNextMskHour(hourMsk, nowMs = Date.now()) {
 
 // Чистый строитель текста отчёта; все данные приходят снаружи — тестируем без сети/таймеров.
 // groups: [{ label, ageSec|null, consecutiveErrors, counts: [{name, count}] }]
-function buildDigestText({ sinceHours, notified, errors, groups }) {
+// unknownCategories: [{ code, count }] — коды категорий, не попавшие в дерево классификатора
+function buildDigestText({ sinceHours, notified, errors, groups, unknownCategories = [] }) {
   const lines = [];
   const anyTrouble = groups.some((g) => g.consecutiveErrors > 0);
   lines.push(`📊 <b>Суточный отчёт — бот жив${anyTrouble ? ', но есть ⚠' : ''}</b>`);
@@ -38,6 +39,11 @@ function buildDigestText({ sinceHours, notified, errors, groups }) {
     lines.push(`  ${g.counts.map((c) => `${c.name}=${c.count}`).join(', ')}`);
   }
   lines.push('');
+  if (unknownCategories.length > 0) {
+    const items = unknownCategories.map((u) => `${escapeHtml(u.code)}×${u.count}`).join(', ');
+    lines.push(`⚙️ Неопознанные категории за период: ${items} — если это не мусор (стройматериалы и т.п.), нужно расширить дерево категорий.`);
+    lines.push('');
+  }
   if (notified === 0) {
     lines.push('Ноль лотов = torgi не публиковал ничего нового по вашим фильтрам — бот работал штатно.');
   }

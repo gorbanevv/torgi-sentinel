@@ -1,7 +1,7 @@
 {
   "telegramBotToken": "ВСТАВЬ_ТОКЕН_ОТ_BOTFATHER",
   "telegramChatId": "ВСТАВЬ_СВОЙ_CHAT_ID",
-  "pollIntervalMs": 75000,
+  "pollIntervalMs": 15000,
   "pageSize": 20,
   "torgiMinRequestGapMs": 10000,
   "torgiRequestJitterMs": 1000,

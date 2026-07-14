@@ -25,6 +25,13 @@ test('buildSearchQuery: без fiasGUID параметра нет', () => {
   assert.ok(!q.includes('fiasGUID'), q);
 });
 
+test('клиент: getLotDetail идёт через лимитер', async () => {
+  const limiter = { schedule: async () => ({ estateAddress: 'тест', viaLimiter: true }) };
+  const client = createTorgiClient({ limiter });
+  const r = await client.getLotDetail('123_1');
+  assert.deepStrictEqual(r, { estateAddress: 'тест', viaLimiter: true });
+});
+
 test('клиент: searchLots и downloadImage идут через переданный лимитер', async () => {
   const scheduled = [];
   // фейковый лимитер не зовёт fn — сеть не трогаем, проверяем только маршрутизацию

@@ -8,7 +8,7 @@ const { escapeHtml } = require('./src/formatter');
 const { createTelegram } = require('./src/telegram');
 const { createNotifier } = require('./src/notifier');
 const { createPoller } = require('./src/poller');
-const { groupFilters, groupLabel } = require('./src/grouping');
+const { createClassifier } = require('./src/classifier');
 const { startHeartbeat } = require('./src/heartbeat');
 const { createAlerter } = require('./src/alerts');
 const { buildDigestText, msUntilNextMskHour } = require('./src/digest');
@@ -35,69 +35,71 @@ async function main() {
   // Сторож ошибок: при устойчивой ошибке шлёт понятный алерт в Telegram, при возврате — «восстановлено».
   const alerter = createAlerter({ tg, log, cooldownMs: cfg.alertCooldownMs, flushDelayMs: cfg.alertFlushMs });
 
-  // Линии опроса: регионы одной категории — одним запросом; город-фильтры (fiasGUID) —
-  // отдельными линиями (см. src/grouping.js). Число линий × интервал держим под лимитом IP.
-  const groupList = groupFilters(cfg.filters);
-
-  const pollers = groupList.map((members) => {
-    const label = groupLabel(members);
-    return createPoller({
-      members,
-      groupName: label,
-      client: torgi,
-      store,
-      notifyLot,
-      log,
-      lotStatuses: cfg.lotStatuses,
-      pollIntervalMs: cfg.pollIntervalMs,
-      pageSize: cfg.pageSize,
-      catchupPageSize: cfg.catchupPageSize,
-      maxCatchupPages: cfg.maxCatchupPages,
-      alertThreshold: cfg.alertThreshold || 3,
-      alertSustainedMs: cfg.alertSustainedMs,
-      reportError: (err) => alerter.report(label, err),
-      reportOk: () => alerter.resolve(label),
-      // догон после простоя упёрся в потолок — часть старых лотов могла не поместиться
-      onCatchupOverflow: (n) => tg.sendMessage(
-        `⚠️ <b>Долгий простой</b> — ${escapeHtml(label)}\n\n` +
-        `Досылаю ${n} свежих лотов, но за время простоя их могло появиться больше, чем помещается в догон. ` +
-        `Часть старых могла быть пропущена — проверьте сайт вручную за период тишины.`
-      ).catch(() => {}),
-    });
+  // УНИВЕРСАЛЬНАЯ ЛИНИЯ: один запрос без категории на все регионы (~15с цикл вместо
+  // 7 линий × 75с — весь лимит IP работает на скорость). Раскладка по фильтрам —
+  // классификатор: регион → категория-лист → город (при необходимости деталь лота).
+  const unknownCategories = new Map(); // код → счётчик с прошлого отчёта (уходит в суточный отчёт)
+  const { classify } = createClassifier({
+    members: cfg.filters,
+    client: torgi,
+    log,
+    onUnknownCategory: (code) => unknownCategories.set(code, (unknownCategories.get(code) || 0) + 1),
   });
+  const regions = [...new Set(cfg.filters.map((f) => f.dynSubjRF))];
+  const laneLabel = `Универсальная линия (${cfg.filters.length} фильтров, регионы ${regions.join('+')})`;
+  const poller = createPoller({
+    members: cfg.filters,
+    classify,
+    groupName: laneLabel,
+    client: torgi,
+    store,
+    notifyLot,
+    log,
+    lotStatuses: cfg.lotStatuses,
+    pollIntervalMs: cfg.pollIntervalMs,
+    catchupPageSize: cfg.catchupPageSize,
+    maxCatchupPages: cfg.maxCatchupPages,
+    alertThreshold: cfg.alertThreshold || 3,
+    alertSustainedMs: cfg.alertSustainedMs,
+    reportError: (err) => alerter.report(laneLabel, err),
+    reportOk: () => alerter.resolve(laneLabel),
+    // догон после простоя упёрся в потолок — часть старых лотов могла не поместиться
+    onCatchupOverflow: (n) => tg.sendMessage(
+      `⚠️ <b>Долгий простой</b>\n\n` +
+      `Досылаю ${n} свежих лотов, но за время простоя их могло появиться больше, чем помещается в догон. ` +
+      `Часть старых могла быть пропущена — проверьте сайт вручную за период тишины.`
+    ).catch(() => {}),
+  });
+  const pollers = [poller];
 
   setInterval(() => {
-    groupList.forEach((members, i) => {
-      const s = pollers[i].stats();
-      const age = s.lastOkAt ? `${Math.round((Date.now() - s.lastOkAt) / 1000)}с назад` : 'ещё не было';
-      const counts = members.map((m) => `${m.name}=${store.count(m.name)}`).join(', ');
-      log(`[heartbeat] ${groupLabel(members)}: последний успешный опрос ${age}, ошибок подряд: ${s.consecutiveErrors}, лоты: ${counts}`);
-    });
+    const s = poller.stats();
+    const age = s.lastOkAt ? `${Math.round((Date.now() - s.lastOkAt) / 1000)}с назад` : 'ещё не было';
+    const counts = cfg.filters.map((m) => `${m.name}=${store.count(m.name)}`).join(', ');
+    log(`[heartbeat] ${laneLabel}: последний успешный опрос ${age}, ошибок подряд: ${s.consecutiveErrors}, лоты: ${counts}`);
   }, (cfg.heartbeatMinutes || 10) * 60 * 1000).unref();
 
   // Суточный отчёт в Telegram: тишина перестаёт быть двусмысленной — отчёт с нулём
   // значит «на torgi пусто», отсутствие отчёта в обычное время значит «бот лежит».
   let digestPrev = { notified: 0, errors: 0, at: Date.now() };
   async function sendDigest() {
-    let notified = 0;
-    let errors = 0;
-    for (const p of pollers) { const s = p.stats(); notified += s.totalNotified; errors += s.totalErrors; }
-    const groupsInfo = groupList.map((members, i) => {
-      const s = pollers[i].stats();
-      return {
-        label: groupLabel(members),
-        ageSec: s.lastOkAt ? Math.round((Date.now() - s.lastOkAt) / 1000) : null,
-        consecutiveErrors: s.consecutiveErrors,
-        counts: members.map((m) => ({ name: m.name, count: store.count(m.name) })),
-      };
-    });
+    const s = poller.stats();
+    const groupsInfo = [{
+      label: laneLabel,
+      ageSec: s.lastOkAt ? Math.round((Date.now() - s.lastOkAt) / 1000) : null,
+      consecutiveErrors: s.consecutiveErrors,
+      counts: cfg.filters.map((m) => ({ name: m.name, count: store.count(m.name) })),
+    }];
+    const unknowns = [...unknownCategories.entries()].map(([code, count]) => ({ code, count }));
+    unknownCategories.clear();
     const text = buildDigestText({
       sinceHours: Math.max(1, Math.round((Date.now() - digestPrev.at) / 3600000)),
-      notified: notified - digestPrev.notified,
-      errors: errors - digestPrev.errors,
+      notified: s.totalNotified - digestPrev.notified,
+      errors: s.totalErrors - digestPrev.errors,
       groups: groupsInfo,
+      unknownCategories: unknowns,
     });
-    digestPrev = { notified, errors, at: Date.now() };
+    digestPrev = { notified: s.totalNotified, errors: s.totalErrors, at: Date.now() };
     try { await tg.sendMessage(text); log('суточный отчёт отправлен'); }
     catch (e) { log(`суточный отчёт не отправился: ${e.message}`); }
   }

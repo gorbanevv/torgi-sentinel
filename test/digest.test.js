@@ -39,6 +39,16 @@ test('buildDigestText: содержит суть — жив, лоты, сбои,
   assert.ok(/нет этого отчёта|отчёта нет/i.test(text), 'подсказка про мёртвого бота');
 });
 
+test('buildDigestText: неопознанные категории всплывают в отчёте', () => {
+  const text = buildDigestText({
+    sinceHours: 24, notified: 1, errors: 0,
+    groups: [{ label: 'Линия', ageSec: 5, consecutiveErrors: 0, counts: [{ name: 'x', count: 1 }] }],
+    unknownCategories: [{ code: '404', count: 3 }],
+  });
+  assert.ok(text.includes('404') && text.includes('3'), 'код и счётчик видны');
+  assert.ok(/неопознан/i.test(text));
+});
+
 test('buildDigestText: при проблемной группе кричит', () => {
   const text = buildDigestText({
     sinceHours: 24, notified: 2, errors: 40,

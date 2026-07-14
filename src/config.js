@@ -59,26 +59,16 @@ function loadConfig(configPath) {
     if (!f.name || !f.dynSubjRF || !f.catCode) {
       throw new Error(`config: у фильтра должны быть name, dynSubjRF, catCode: ${JSON.stringify(f)}`);
     }
+    if (f.name === '_all') {
+      throw new Error('config: имя фильтра "_all" зарезервировано под общую корзину универсальной линии');
+    }
     f.displayName = f.displayName || f.name;
   }
-  // Групповой опрос (несколько регионов одной категории одним запросом) раскладывает лоты
-  // по subjectRFCode из карточки — он обязателен, когда в линии больше одного фильтра.
-  // Линия = catCode + fiasGUID (город-фильтры живут отдельными линиями, см. grouping.js).
-  const byLane = new Map();
+  // Универсальная линия раскладывает лоты по subjectRFCode из карточки —
+  // код обязателен каждому фильтру (Севастополь=92, Ростовская обл.=61, Краснодарский край=23).
   for (const f of cfg.filters) {
-    const k = `${f.catCode}|${f.fiasGUID || ''}`;
-    if (!byLane.has(k)) byLane.set(k, []);
-    byLane.get(k).push(f);
-  }
-  for (const [lane, members] of byLane) {
-    if (members.length < 2) continue;
-    for (const f of members) {
-      if (!f.subjectRFCode) {
-        throw new Error(
-          `config: фильтру ${f.name} нужен subjectRFCode для групповой линии ${lane} ` +
-          `(код региона в карточках лотов: Севастополь=92, Ростовская обл.=61, Краснодарский край=23)`
-        );
-      }
+    if (!f.subjectRFCode) {
+      throw new Error(`config: фильтру ${f.name} нужен subjectRFCode (код региона в карточках лотов)`);
     }
   }
   return cfg;

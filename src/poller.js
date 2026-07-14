@@ -17,6 +17,8 @@
 function createPoller({
   filter,     // одиночный фильтр (эквивалент members: [filter])
   members,    // группа фильтров одной catCode: [{name, displayName, dynSubjRF, subjectRFCode, ...}]
+  classify,   // УНИВЕРСАЛЬНЫЙ режим: (lot) => Promise<member[]> — один запрос без категории
+              // на все регионы, раскладка по фильтрам классификатором; граница — корзина _all
   groupName,  // подпись группы в логах (по умолчанию имена участников)
   client,
   store,
@@ -38,12 +40,15 @@ function createPoller({
 }) {
   const list = (members && members.length ? members : [filter]).filter(Boolean);
   if (list.length === 0) throw new Error('poller: нужен filter или непустой members');
+  const universal = typeof classify === 'function';
+  const ALL = '_all'; // общая корзина виденных лотов любой категории — граница универсальной линии
   const name = groupName || list.map((m) => m.name).join('+');
   const catCode = list[0].catCode;
   // город-фильтр (ФИАС): у всех участников линии он одинаков — за это отвечает groupFilters
   const fiasGUID = list[0].fiasGUID || undefined;
   const multi = list.length > 1;
   const byRegion = new Map(list.map((m) => [String(m.subjectRFCode), m]));
+  const uniqueRegions = [...new Set(list.map((m) => String(m.dynSubjRF)))];
 
   let consecutiveErrors = 0;
   let errorStreakStartAt = 0;
@@ -67,7 +72,7 @@ function createPoller({
   async function seedMember(m) {
     let added = 0;
     for (let page = 0; page < maxSeedPages; page++) {
-      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode, fiasGUID: m.fiasGUID || undefined, lotStatuses, size: 100, page });
+      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode: m.catCode, fiasGUID: m.fiasGUID || undefined, lotStatuses, size: 100, page });
       const lots = data.content || [];
       for (const lot of lots) {
         if (!store.has(m.name, lotId(lot))) { store.add(m.name, lotId(lot)); added++; }
@@ -91,7 +96,7 @@ function createPoller({
     const fresh = [];
     let truncated = false;
     for (let page = 0; page < maxCatchupPages; page++) {
-      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode, fiasGUID: m.fiasGUID || undefined, lotStatuses, size: catchupPageSize, page });
+      const data = await client.searchLots({ dynSubjRF: m.dynSubjRF, catCode: m.catCode, fiasGUID: m.fiasGUID || undefined, lotStatuses, size: catchupPageSize, page });
       const lots = data.content || [];
       let sawKnown = false;
       for (const lot of lots) {
@@ -138,7 +143,102 @@ function createPoller({
     return { fresh: deep, truncated: deepTruncated };
   }
 
+  // --- универсальная линия: один запрос без категории, граница по корзине _all ---
+
+  // Первичный засев общей корзины: всё видимое сейчас по каждому региону (любые категории)
+  // помечается виденным без уведомлений — граница для последующих циклов.
+  async function seedAll() {
+    let added = 0;
+    for (const region of uniqueRegions) {
+      for (let page = 0; page < maxSeedPages; page++) {
+        const data = await client.searchLots({ dynSubjRF: region, lotStatuses, size: 100, page });
+        const lots = data.content || [];
+        for (const lot of lots) {
+          if (!store.has(ALL, lotId(lot))) { store.add(ALL, lotId(lot)); added++; }
+        }
+        store.save();
+        if (data.last || lots.length === 0) break;
+      }
+    }
+    store.markSeeded(ALL);
+    store.save();
+    log(`[${name}] первичный засев общей корзины: ${added} лотов записано без уведомлений`);
+  }
+
+  async function fetchNewLotsUniversal() {
+    const fresh = [];
+    let truncated = false;
+    for (let page = 0; page < maxCatchupPages; page++) {
+      const data = await client.searchLots({ dynSubjRF: uniqueRegions, lotStatuses, size: catchupPageSize, page });
+      const lots = data.content || [];
+      let sawKnown = false;
+      for (const lot of lots) {
+        if (store.has(ALL, lotId(lot))) sawKnown = true;
+        else fresh.push(lot);
+      }
+      if (sawKnown || data.last || lots.length === 0) break;
+      if (page === maxCatchupPages - 1) truncated = true;
+    }
+    return { fresh, truncated };
+  }
+
+  async function pollOnceUniversal() {
+    const unseededMembers = list.filter((m) => !store.isSeeded(m.name));
+    const needSeedAll = !store.isSeeded(ALL);
+    if (unseededMembers.length > 0 || needSeedAll) {
+      for (const m of unseededMembers) await seedMember(m);
+      if (needSeedAll) await seedAll();
+      return { seeded: true, notified: 0, truncated: false };
+    }
+
+    const { fresh, truncated } = await fetchNewLotsUniversal();
+    fresh.reverse(); // старые сначала — сообщения приходят хронологично
+    let notified = 0;
+    for (const lot of fresh) {
+      // classify может сходить за деталью и бросить — тогда цикл повторится, лот не потеряется
+      const targets = await classify(lot);
+      for (const member of targets) {
+        if (store.has(member.name, lotId(lot))) continue;
+        await notifyLot(lot, member);
+        store.add(member.name, lotId(lot));
+        notified++;
+      }
+      store.add(ALL, lotId(lot)); // виденное (в т.ч. чужие категории) — граница для следующих циклов
+      store.save();
+    }
+
+    let finalTruncated = false;
+    if (truncated) {
+      // Бюджет универсального прохода кончился без границы (долгий простой):
+      // добираем каждым фильтром его точным запросом (catCode+fiasGUID, size=100 работает).
+      log(`[${name}] универсальный догон упёрся в потолок — включаю по-фильтровый глубокий догон`);
+      const deep = [];
+      for (const m of list) {
+        const r = await fetchMemberNewLots(m);
+        deep.push(...r.fresh);
+        if (r.truncated) finalTruncated = true;
+      }
+      const pubTs = (x) => Date.parse(x.lot.noticeFirstVersionPublicationDate || x.lot.createDate || '') || 0;
+      deep.sort((a, b) => pubTs(a) - pubTs(b)); // старые сначала
+      for (const { lot, member } of deep) {
+        if (!store.has(member.name, lotId(lot))) {
+          await notifyLot(lot, member);
+          store.add(member.name, lotId(lot));
+          notified++;
+        }
+        store.add(ALL, lotId(lot));
+      }
+      store.save();
+      if (finalTruncated) {
+        log(`[${name}] и глубокий догон упёрся в потолок: досылано ${notified}, часть старых могла не поместиться`);
+        if (onCatchupOverflow) { try { await onCatchupOverflow(notified); } catch {} }
+      }
+    }
+    return { seeded: false, notified, truncated: finalTruncated };
+  }
+
   async function pollOnce() {
+    if (universal) return pollOnceUniversal();
     const unseeded = list.filter((m) => !store.isSeeded(m.name));
     if (unseeded.length > 0) {
       for (const m of unseeded) await seedMember(m);

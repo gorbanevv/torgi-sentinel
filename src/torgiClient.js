@@ -71,6 +71,11 @@ function createTorgiClient({ timeoutMs = 15000, localAddress, limiter } = {}) {
     return throttled(() => getJson('/new/api/public/lotcards/search?' + buildSearchQuery(params)));
   }
 
+  // Деталь лота: нормализованный estateAddress и полные атрибуты (для привязки к городу).
+  function getLotDetail(lotId) {
+    return throttled(() => getJson('/new/api/public/lotcards/' + encodeURIComponent(lotId)));
+  }
+
   function downloadImage(imageId, opts = {}) {
     return throttled(() => rawDownloadImage(imageId, opts));
   }
@@ -95,7 +100,7 @@ function createTorgiClient({ timeoutMs = 15000, localAddress, limiter } = {}) {
     });
   }
 
-  return { searchLots, downloadImage, agent };
+  return { searchLots, getLotDetail, downloadImage, agent };
 }
 
 module.exports = { createTorgiClient, buildSearchQuery };
