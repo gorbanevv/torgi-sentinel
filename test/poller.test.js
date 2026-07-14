@@ -312,6 +312,27 @@ test('универсал: граница страницы — по общей к
   assert.deepStrictEqual(notify.calls, ['N_1@u-rostov-land']);
 });
 
+test('универсал: засев _all неглубокий — нужен только свежий край как граница', async () => {
+  const client = mkClient();
+  const store = mkStore();
+  const notify = mkGroupNotify();
+  for (const m of UNI_MEMBERS) store.markSeeded(m.name);
+  const p = createPoller({
+    members: UNI_MEMBERS, classify: uniClassify, allSeedPages: 2,
+    client, store, notifyLot: notify.notifyLot, log: () => {}, sleep: async () => {},
+  });
+  // регион 80: страниц больше, чем кап — глубже 2 не листаем
+  client.queue.push({ content: [uniLot('A1', '92', '9')], last: false });
+  client.queue.push({ content: [uniLot('A2', '92', '9')], last: false });
+  // регионы 63 и 26 — по одной странице
+  client.queue.push({ content: [uniLot('B1', '61', '301')], last: true });
+  client.queue.push({ content: [uniLot('C1', '23', '404')], last: true });
+
+  await p.pollOnce();
+  assert.strictEqual(client.calls.length, 4, '2 (кап) + 1 + 1 страницы');
+  assert.ok(store.isSeeded('_all'));
+});
+
 test('универсал: первый запуск — _all засевается по каждому региону отдельно, без уведомлений', async () => {
   const client = mkClient();
   const store = mkStore();

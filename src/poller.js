@@ -29,6 +29,8 @@ function createPoller({
   catchupPageSize = 100,      // размер страницы догона: 100 → глубокий догон немногими запросами
   maxCatchupPages = 25,       // потолок глубины догона (25×100=2500 лотов на группу за простой)
   maxSeedPages = 100,
+  allSeedPages = 3,           // засев общей корзины _all: только свежий край (граница), не вся история
+                              // (запросы без catCode режутся torgi до 10 лотов/страницу)
   maxBackoffMs = 600000,      // потолок паузы между повторами при затяжной беде (10 мин)
   alertThreshold = 3,         // алерт не раньше стольких ошибок подряд…
   alertSustainedMs = 300000,  // …И не раньше, чем беда продержится столько (не алертим мигание)
@@ -145,12 +147,13 @@ function createPoller({
 
   // --- универсальная линия: один запрос без категории, граница по корзине _all ---
 
-  // Первичный засев общей корзины: всё видимое сейчас по каждому региону (любые категории)
-  // помечается виденным без уведомлений — граница для последующих циклов.
+  // Первичный засев общей корзины: помечаем СВЕЖИЙ КРАЙ каждого региона (любые категории)
+  // без уведомлений — этого достаточно: граница циклов ищется от вершины списка вниз,
+  // до старых непомеченных лотов проход никогда не доходит.
   async function seedAll() {
     let added = 0;
     for (const region of uniqueRegions) {
-      for (let page = 0; page < maxSeedPages; page++) {
+      for (let page = 0; page < allSeedPages; page++) {
         const data = await client.searchLots({ dynSubjRF: region, lotStatuses, size: 100, page });
         const lots = data.content || [];
         for (const lot of lots) {
@@ -261,7 +264,9 @@ function createPoller({
   }
 
   async function run() {
-    log(`[${name}] поллер запущен: catCode=${catCode}, регионы=${list.map((m) => m.dynSubjRF).join('+')}, интервал ${pollIntervalMs}мс`);
+    log(universal
+      ? `[${name}] поллер запущен: универсальный (без категории), регионы=${uniqueRegions.join('+')}, интервал ${pollIntervalMs}мс`
+      : `[${name}] поллер запущен: catCode=${catCode}, регионы=${list.map((m) => m.dynSubjRF).join('+')}, интервал ${pollIntervalMs}мс`);
     let alerted = false;
     while (!stopped) {
       try {
