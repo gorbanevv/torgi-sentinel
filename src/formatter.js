@@ -80,10 +80,27 @@ function formatAreaValue(n) {
   return Number.isInteger(n) ? String(n) : String(n).replace('.', ',');
 }
 
-function buildLines(lot, filter, { withDescription = true, withAddress = true } = {}) {
+function cleanAddress(s) {
+  return String(s).replace(/\s+/g, ' ').trim();
+}
+
+// Фактический адрес лота: сначала нормализованный estateAddress из детали (там всегда есть
+// город), затем адрес из карточки (обычно пуст), затем — регион из имени фильтра как крайний
+// фолбэк, чтобы блок местоположения был ВСЕГДА.
+function resolveAddress(lot, filter, estateAddress) {
+  const e = estateAddress && cleanAddress(estateAddress);
+  if (e) return e;
+  const card = extractAddress(lot);
+  if (card) return cleanAddress(card);
+  const region = String(filter.displayName || '').split('·')[0].trim();
+  return region || null;
+}
+
+function buildLines(lot, filter, { withDescription = true, address = null } = {}) {
   const icon = filter.realEstate ? '🏠' : '🚗';
   const lines = [];
   lines.push(`${icon} <b>Новый лот · ${escapeHtml(filter.displayName || filter.name)}</b>`);
+  if (address) lines.push(`📍 <b>${escapeHtml(truncate(address, 250))}</b>`); // город и адрес — всегда в начале
   lines.push('');
   lines.push(`<b>${escapeHtml(truncate(lot.lotName || 'Без названия', 250))}</b>`);
   const desc = (lot.lotDescription || '').trim();
@@ -101,8 +118,6 @@ function buildLines(lot, filter, { withDescription = true, withAddress = true } 
   if (bidd) lines.push(`📋 ${escapeHtml(bidd)}`);
   const end = formatDateMsk(lot.biddEndTime);
   if (end) lines.push(`⏳ Приём заявок до: ${end}`);
-  const addr = withAddress ? extractAddress(lot) : null;
-  if (addr) lines.push(`📍 ${escapeHtml(truncate(addr, 200))}`);
   if (lot.category && lot.category.name) lines.push(`🏷 ${escapeHtml(lot.category.name)}`);
   lines.push('');
   const id = lot.id || `${lot.noticeNumber}_${lot.lotNumber}`;
@@ -112,12 +127,12 @@ function buildLines(lot, filter, { withDescription = true, withAddress = true } 
 
 const MAX_PHOTOS = 10; // потолок альбома Telegram — больше в одно сообщение не влезает
 
-function formatLotMessage(lot, filter) {
+function formatLotMessage(lot, filter, { estateAddress } = {}) {
   const imageIds = Array.isArray(lot.lotImages) ? lot.lotImages.filter(Boolean).slice(0, MAX_PHOTOS) : [];
   const limit = imageIds.length > 0 ? CAPTION_LIMIT : TEXT_LIMIT;
-  let text = buildLines(lot, filter);
-  if (text.length > limit) text = buildLines(lot, filter, { withDescription: false });
-  if (text.length > limit) text = buildLines(lot, filter, { withDescription: false, withAddress: false });
+  const address = resolveAddress(lot, filter, estateAddress); // адрес держим ВСЕГДА, режем описание
+  let text = buildLines(lot, filter, { address });
+  if (text.length > limit) text = buildLines(lot, filter, { address, withDescription: false });
   if (text.length > limit) text = text.slice(0, limit - 1) + '…'; // крайний случай
   return { text, imageIds };
 }

@@ -55,6 +55,35 @@ test('все фото лота отдаются списком, максимум
   assert.deepStrictEqual(imageIds, many.slice(0, 10), 'первые 10, порядок сохранён');
 });
 
+test('город и адрес из детали (estateAddress) идут В НАЧАЛО, жирным', () => {
+  const addr = 'край Краснодарский, г.о. город Краснодар, г. Краснодар, ул. Постовая, дом 32';
+  const { text } = formatLotMessage(fixtureLot(), filterRealty, { estateAddress: addr });
+  const headerIdx = text.indexOf('Новый лот');
+  const addrIdx = text.indexOf('Постовая');
+  const nameIdx = text.indexOf('Нежилое помещение');
+  assert.ok(headerIdx >= 0 && addrIdx > headerIdx && addrIdx < nameIdx, 'адрес между заголовком и названием лота');
+  assert.ok(text.includes('📍') && text.includes('<b>край Краснодарский'), 'адрес жирным с меткой');
+});
+
+test('город/адрес показывается ВСЕГДА: деталь → карточка → регион', () => {
+  const { text: t1 } = formatLotMessage(fixtureLot(), filterRealty); // без детали, но есть DA_address в карточке
+  assert.ok(t1.includes('г. Севастополь, ул. Ленина, 1'));
+  const bare = fixtureLot({ attributes: [], characteristics: [] });
+  const { text: t2 } = formatLotMessage(bare, filterRealty); // ни детали, ни карточки → регион
+  assert.ok(t2.includes('📍') && t2.includes('Севастополь'), 'регион как последний фолбэк');
+});
+
+test('адрес из детали не дублируется (ровно один блок 📍)', () => {
+  const { text } = formatLotMessage(fixtureLot(), filterRealty, { estateAddress: 'г. Севастополь, ул. Ленина, 1' });
+  assert.strictEqual(text.split('📍').length - 1, 1);
+});
+
+test('estateAddress с переносами и лишними пробелами нормализуется', () => {
+  const { text } = formatLotMessage(fixtureLot(), filterRealty, { estateAddress: '  обл. Ростовская,\n\t г. Ростов  ' });
+  assert.ok(text.includes('обл. Ростовская, г. Ростов'));
+  assert.ok(!text.includes('Ростовская,\n'));
+});
+
 test('HTML в названии лота экранируется', () => {
   const { text } = formatLotMessage(fixtureLot(), filterRealty);
   assert.ok(text.includes('&lt;площадь &amp; кадастр&gt;'));

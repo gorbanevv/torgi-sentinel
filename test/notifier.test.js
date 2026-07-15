@@ -10,13 +10,19 @@ function mkLot(images) {
   return { id: 'L_1', noticeNumber: 'L', lotNumber: 1, lotName: 'Лот', lotImages: images };
 }
 
-function mkFakes({ failDownload = [], failGroup = false, failPhoto = false, failMessage = false } = {}) {
+function mkFakes({ failDownload = [], failGroup = false, failPhoto = false, failMessage = false, estateAddress = 'обл. Ростовская, г. Ростов-на-Дону, ул. Большая Садовая, 1', failDetail = false } = {}) {
   const client = {
     downloads: [],
+    detailCalls: [],
     async downloadImage(id) {
       client.downloads.push(id);
       if (failDownload.includes(id)) throw new Error('image HTTP 503');
       return { buffer: Buffer.from('img-' + id), contentType: 'image/jpeg' };
+    },
+    async getLotDetail(id) {
+      client.detailCalls.push(id);
+      if (failDetail) throw new Error('detail HTTP 503');
+      return { estateAddress };
     },
   };
   const tg = {
@@ -37,6 +43,21 @@ function mkFakes({ failDownload = [], failGroup = false, failPhoto = false, fail
   };
   return { client, tg };
 }
+
+test('адрес из детали лота попадает в начало подписи', async () => {
+  const { client, tg } = mkFakes({ estateAddress: 'край Краснодарский, г. Краснодар, ул. Мира, 1' });
+  const n = createNotifier({ client, tg, log: () => {} });
+  await n.notifyLot(mkLot(['a']), FILTER);
+  assert.ok(client.detailCalls.includes('L_1'), 'деталь запрошена по id лота');
+  assert.ok(tg.calls[0].caption.includes('г. Краснодар, ул. Мира, 1'), 'город и адрес в подписи');
+});
+
+test('деталь для адреса недоступна → уведомление всё равно уходит', async () => {
+  const { client, tg } = mkFakes({ failDetail: true });
+  const n = createNotifier({ client, tg, log: () => {} });
+  await n.notifyLot(mkLot([]), FILTER);
+  assert.deepStrictEqual(tg.calls.map((c) => c.m), ['msg'], 'сообщение отправлено несмотря на сбой детали');
+});
 
 test('потолок фото: качаем и шлём только первые maxPhotos (скорость дороже полноты)', async () => {
   const { client, tg } = mkFakes();

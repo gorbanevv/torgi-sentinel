@@ -15,7 +15,17 @@ const { formatLotMessage, stripHtml } = require('./formatter');
 // уведомления дороже полноты галереи (решение пользователя 2026-07-12).
 function createNotifier({ client, tg, log = () => {}, maxPhotos = 3 }) {
   async function notifyLot(lot, filter) {
-    const { text, imageIds } = formatLotMessage(lot, filter);
+    const id = lot.id || `${lot.noticeNumber}_${lot.lotNumber}`;
+    // фактический адрес (с городом) есть только в детальной карточке — тянем её ради
+    // блока местоположения; сбой детали не должен мешать доставке уведомления
+    let estateAddress = null;
+    try {
+      const detail = await client.getLotDetail(id);
+      estateAddress = detail && detail.estateAddress;
+    } catch (e) {
+      log(`[${filter.name}] деталь для адреса не получена (${e.message}) — адрес по карточке/региону`);
+    }
+    const { text, imageIds } = formatLotMessage(lot, filter, { estateAddress });
 
     const photos = [];
     for (const id of imageIds.slice(0, Math.max(0, maxPhotos))) {
